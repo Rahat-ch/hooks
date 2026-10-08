@@ -1,34 +1,39 @@
+/**
+ * git-guard through `hardhooks run PreToolUse`, as a Host runs it: force
+ * pushes, history and work-tree destruction, skipped git hooks, remote
+ * deletes and protected branches, seen through wrappers and script strings.
+ * Protected-branch cases use real git repos (ADR-0006).
+ */
 import { join } from "node:path";
 import { describe, it } from "vitest";
-import type { ResolvedConfig } from "../../config";
 import {
   claudeCode,
   expectAsked,
   expectBlocked,
   expectFixture,
   expectNoDecision,
-  hermeticGitEnvironment,
-  initGitRepo,
-  loadFixtures,
-  runEvent,
-} from "../../../test/helpers";
+  hookFixtures,
+  sandbox,
+  type GitRepoOptions,
+} from "../helpers";
 
 describe("git-guard", () => {
   it("blocks `git push --force` with a reason", async () => {
-    const result = await runEvent(claudeCode.bash("git push --force origin main"));
+    const result = await sandbox().event(claudeCode.bash("git push --force origin main"));
     expectBlocked(result, /force/i);
   });
 
   it.each(["git push -f", "git push -uf origin feature", "git -C repo push origin main --force"])(
     "blocks force-push variant `%s`",
     async (command) => {
-      expectBlocked(await runEvent(claudeCode.bash(command)), /force/i);
+      expectBlocked(await sandbox().event(claudeCode.bash(command)), /force/i);
     },
   );
 
   it("blocks a force-push hidden in a command list or substitution", async () => {
-    expectBlocked(await runEvent(claudeCode.bash("npm test && git push --force")));
-    expectBlocked(await runEvent(claudeCode.bash('echo "$(git push -f)"')));
+    const box = sandbox();
+    expectBlocked(await box.event(claudeCode.bash("npm test && git push --force")));
+    expectBlocked(await box.event(claudeCode.bash('echo "$(git push -f)"')));
   });
 
   describe("sees through wrappers", () => {
@@ -74,7 +79,7 @@ describe("git-guard", () => {
       "sh <<EOF\ngit push -f\nEOF",
       "find . -maxdepth 0 -exec git push -f \\;",
     ])("`%s`", async (command) => {
-      expectBlocked(await runEvent(claudeCode.bash(command)), /force/i);
+      expectBlocked(await sandbox().event(claudeCode.bash(command)), /force/i);
     });
   });
 
@@ -114,7 +119,7 @@ describe("git-guard", () => {
       ["setsid git push -f", /force/i],
       ["ionice -c 3 git push -f", /force/i],
     ])("`%s`", async (command, reason) => {
-      expectBlocked(await runEvent(claudeCode.bash(command)), reason);
+      expectBlocked(await sandbox().event(claudeCode.bash(command)), reason);
     });
 
     it.each([
@@ -128,14 +133,14 @@ describe("git-guard", () => {
       'bash -c "echo \\"git push -f $R\\""',
       'bash -c "git commit -m \\"$MSG: never git push --force\\""',
     ])("allows `%s`", async (command) => {
-      expectNoDecision(await runEvent(claudeCode.bash(command)));
+      expectNoDecision(await sandbox().event(claudeCode.bash(command)));
     });
   });
 
   it.each(["git push origin +main", "git push origin +HEAD:main", "git push origin feature +main:main"])(
     "blocks force-pushing a `+refspec`: `%s`",
     async (command) => {
-      expectBlocked(await runEvent(claudeCode.bash(command)), /\+|force/i);
+      expectBlocked(await sandbox().event(claudeCode.bash(command)), /\+|force/i);
     },
   );
 
@@ -147,7 +152,7 @@ describe("git-guard", () => {
     "sudo git reset --hard",
     "git -C repo reset -q --hard",
   ])("blocks `%s`, which destroys uncommitted work", async (command) => {
-    expectBlocked(await runEvent(claudeCode.bash(command)), /reset --hard/);
+    expectBlocked(await sandbox().event(claudeCode.bash(command)), /reset --hard/);
   });
 
   it.each([
@@ -161,7 +166,7 @@ describe("git-guard", () => {
     "git clean -e f -fd",
     "bash -c 'git clean -xdf'",
   ])("blocks `%s`, which deletes untracked files", async (command) => {
-    expectBlocked(await runEvent(claudeCode.bash(command)), /clean/);
+    expectBlocked(await sandbox().event(claudeCode.bash(command)), /clean/);
   });
 
   it.each([
@@ -176,7 +181,7 @@ describe("git-guard", () => {
     "git -c core.hooksPath=/dev/null commit -m wip",
     "git -c core.hookspath=/tmp/none push origin feature",
   ])("blocks `%s`, which skips the user's git hooks", async (command) => {
-    expectBlocked(await runEvent(claudeCode.bash(command)), /no-verify/);
+    expectBlocked(await sandbox().event(claudeCode.bash(command)), /no-verify/);
   });
 
   it.each([
@@ -191,7 +196,7 @@ describe("git-guard", () => {
     "git commit -m wip -m 'details: reset --hard'",
     "git stash",
   ])("allows `%s`", async (command) => {
-    expectNoDecision(await runEvent(claudeCode.bash(command)));
+    expectNoDecision(await sandbox().event(claudeCode.bash(command)));
   });
 
   it.each([
@@ -209,13 +214,13 @@ describe("git-guard", () => {
     ["git branch --delete --force old-feature", /branch -D/],
     ["git branch -df old-feature", /branch -D/],
   ])("asks before `%s`", async (command, reason) => {
-    expectAsked(await runEvent(claudeCode.bash(command)), reason);
+    expectAsked(await sandbox().event(claudeCode.bash(command)), reason);
   });
 
   it.each(["git push --mirror", "git push --mirror origin", "git push --mirr backup", 'bash -c "git push --mirror $R"'])(
     "blocks `%s`, which overwrites and deletes every remote ref",
     async (command) => {
-      expectBlocked(await runEvent(claudeCode.bash(command)), /--mirror/);
+      expectBlocked(await sandbox().event(claudeCode.bash(command)), /--mirror/);
     },
   );
 
@@ -231,19 +236,20 @@ describe("git-guard", () => {
     "git push --prune origin 'refs/heads/*:refs/heads/*'",
     "sudo git push origin :feature",
   ])("asks before `%s`, which deletes remote refs", async (command) => {
-    expectAsked(await runEvent(claudeCode.bash(command)), /delete/i);
+    expectAsked(await sandbox().event(claudeCode.bash(command)), /delete/i);
   });
 
   it.each(["git push origin :", "git push origin feature:feature", "git push origin HEAD:feature"])(
     "allows `%s`, which deletes nothing",
     async (command) => {
-      expectNoDecision(await runEvent(claudeCode.bash(command)));
+      expectNoDecision(await sandbox().event(claudeCode.bash(command)));
     },
   );
 
   it("blocks rather than asks when a command line both force-pushes and asks", async () => {
-    expectBlocked(await runEvent(claudeCode.bash("git branch -D tmp && git push --force")), /force/);
-    expectBlocked(await runEvent(claudeCode.bash("git push --force-with-lease --force")), /force/);
+    const box = sandbox();
+    expectBlocked(await box.event(claudeCode.bash("git branch -D tmp && git push --force")), /force/);
+    expectBlocked(await box.event(claudeCode.bash("git push --force-with-lease --force")), /force/);
   });
 
   it.each([
@@ -255,7 +261,7 @@ describe("git-guard", () => {
     "git branch -d merged-feature",
     "git branch -m old new",
   ])("allows `%s`", async (command) => {
-    expectNoDecision(await runEvent(claudeCode.bash(command)));
+    expectNoDecision(await sandbox().event(claudeCode.bash(command)));
   });
 
   describe("treats prose and data as data", () => {
@@ -281,12 +287,12 @@ describe("git-guard", () => {
       "# git push --force\ngit status",
       "git status # then git push --force",
     ])("allows `%s`", async (command) => {
-      expectNoDecision(await runEvent(claudeCode.bash(command)));
+      expectNoDecision(await sandbox().event(claudeCode.bash(command)));
     });
   });
 
   it("ignores non-shell tools", async () => {
-    expectNoDecision(await runEvent(claudeCode.preToolUse("Write", { file_path: "notes.md", content: "git push -f" })));
+    expectNoDecision(await sandbox().event(claudeCode.preToolUse("Write", { file_path: "notes.md", content: "git push -f" })));
   });
 
   it.each([
@@ -298,27 +304,28 @@ describe("git-guard", () => {
     'bash -c "if true; then git push origin $R"',
     'eval "git push \\"$R"',
   ])("blocks `%s`, which it cannot parse, saying it couldn't be analysed", async (command) => {
-    expectBlocked(await runEvent(claudeCode.bash(command)), /couldn't be analysed/);
+    expectBlocked(await sandbox().event(claudeCode.bash(command)), /couldn't be analysed/);
   });
 
   it("does not fail on unparseable prose inside data", async () => {
-    expectNoDecision(await runEvent(claudeCode.bash(`git commit -m "don't run 'git push --force (please"`)));
-    expectNoDecision(await runEvent(claudeCode.bash("cat <<'EOF' > notes.md\nit's \"unbalanced ( prose\nEOF")));
+    const box = sandbox();
+    expectNoDecision(await box.event(claudeCode.bash(`git commit -m "don't run 'git push --force (please"`)));
+    expectNoDecision(await box.event(claudeCode.bash("cat <<'EOF' > notes.md\nit's \"unbalanced ( prose\nEOF")));
   });
 
   describe("protected branches", () => {
-    const strict: ResolvedConfig = { preset: "strict", hooks: {} };
-    const standard: ResolvedConfig = { preset: "standard", hooks: {} };
-    const custom = (preset: ResolvedConfig["preset"], protectedBranches: string[]): ResolvedConfig => ({
+    const strict = { preset: "strict" };
+    const standard = { preset: "standard" };
+    const custom = (preset: "standard" | "strict", protectedBranches: string[]) => ({
       preset,
-      hooks: { "git-guard": { enabled: true, options: { protectedBranches } } },
+      hooks: { "git-guard": { protectedBranches } },
     });
 
-    /** Run `command` in a real repo (the project dir) currently on `branch`. */
-    async function inRepo(command: string, config: ResolvedConfig, options: { branch?: string; originHead?: string } = {}) {
-      const env = hermeticGitEnvironment();
-      initGitRepo(env, env.cwd, options);
-      return runEvent(claudeCode.bash(command), { env, config });
+    /** Run `command` in a real repo (the project dir) currently on `branch`, with `config` as its repo config. */
+    async function inRepo(command: string, config: object, options: GitRepoOptions = {}) {
+      const box = sandbox({ git: options });
+      box.writeRepoConfig(config);
+      return box.event(claudeCode.bash(command));
     }
 
     it.each(["git commit -m 'wip'", "git commit --amend --no-edit", "git push", "git push -u origin", "git push origin main", "git push origin HEAD"])(
@@ -375,36 +382,45 @@ describe("git-guard", () => {
       },
     );
 
-    it("under strict, protects the detected default branch", async () => {
-      expectBlocked(await inRepo("git commit -m wip", strict, { branch: "trunk", originHead: "trunk" }), /`trunk`/);
-      expectBlocked(await inRepo("git push origin trunk", strict, { branch: "feature", originHead: "trunk" }), /`trunk`/);
-      expectNoDecision(await inRepo("git commit -m wip", strict, { branch: "trunk" }));
+    it.each([
+      ["git commit -m wip", { branch: "trunk", originHead: "trunk" }, "blocks"],
+      ["git push origin trunk", { branch: "feature", originHead: "trunk" }, "blocks"],
+      ["git commit -m wip", { branch: "trunk" }, "allows"],
+    ] as const)("under strict, protects the detected default branch: `%s` in %j %s", async (command, repo, outcome) => {
+      const result = await inRepo(command, strict, repo);
+      if (outcome === "blocks") expectBlocked(result, /`trunk`/);
+      else expectNoDecision(result);
     });
 
-    it("honours a custom protectedBranches list, under any Preset", async () => {
-      expectBlocked(await inRepo("git commit -m wip", custom("standard", ["release"]), { branch: "release" }), /`release`/);
-      expectBlocked(await inRepo("git push origin release", custom("standard", ["release"]), { branch: "x" }), /`release`/);
-      expectNoDecision(await inRepo("git commit -m wip", custom("standard", ["release"]), { branch: "main" }));
-      expectBlocked(await inRepo("git commit -m wip", custom("strict", ["release"]), { branch: "release" }), /`release`/);
+    it.each([
+      ["git commit -m wip", custom("standard", ["release"]), "release", "blocks"],
+      ["git push origin release", custom("standard", ["release"]), "x", "blocks"],
+      ["git commit -m wip", custom("standard", ["release"]), "main", "allows"],
+      ["git commit -m wip", custom("strict", ["release"]), "release", "blocks"],
+    ] as const)("honours a custom protectedBranches list, under any Preset: `%s` with %j on %s %s", async (command, config, branch, outcome) => {
+      const result = await inRepo(command, config, { branch });
+      if (outcome === "blocks") expectBlocked(result, /`release`/);
+      else expectNoDecision(result);
     });
 
     it("checks the repo the command actually runs in", async () => {
-      const env = hermeticGitEnvironment();
-      initGitRepo(env, env.cwd, { branch: "feature" });
-      initGitRepo(env, join(env.cwd, "vendor", "lib"), { branch: "main" });
-      const run = (command: string) => runEvent(claudeCode.bash(command), { env, config: strict });
+      const box = sandbox({ git: { branch: "feature" } });
+      box.initGitRepo(join(box.project, "vendor", "lib"), { branch: "main" });
+      box.writeRepoConfig(strict);
+      const run = (command: string) => box.event(claudeCode.bash(command));
       expectBlocked(await run("cd vendor/lib && git commit -m wip"), /`main`/);
       expectBlocked(await run("git -C vendor/lib commit -m wip"), /`main`/);
       expectNoDecision(await run("git commit -m wip"));
     });
 
     it("stays out of the way outside a git repo", async () => {
-      const env = hermeticGitEnvironment();
-      expectNoDecision(await runEvent(claudeCode.bash("git commit -m wip"), { env, config: strict }));
+      const box = sandbox();
+      box.writeRepoConfig(strict);
+      expectNoDecision(await box.event(claudeCode.bash("git commit -m wip")));
     });
   });
 
-  it.each(loadFixtures(new URL("./fixtures", import.meta.url)))("fixture $file: $description", async (fixture) => {
-    expectFixture(await runEvent(JSON.stringify(fixture.payload), { event: fixture.event }), fixture);
+  it.each(hookFixtures("git-guard"))("fixture $file: $description", async (fixture) => {
+    expectFixture(await sandbox().event(JSON.stringify(fixture.payload), { event: fixture.event }), fixture);
   });
 });
