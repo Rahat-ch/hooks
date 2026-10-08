@@ -33,6 +33,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: End-to-end tests (every test runs the bundled CLI)
+        run: npm run test:e2e
       - run: npm test
       - name: Smoke tests (bundled CLI)
         run: npx vitest run --project smoke

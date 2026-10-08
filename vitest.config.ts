@@ -7,7 +7,19 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["src/**/*.test.ts", "test/**/*.test.ts"],
-          exclude: ["test/smoke/**"],
+          exclude: ["test/smoke/**", "test/e2e/**"],
+        },
+      },
+      {
+        // Every test spawns the real bundled CLI (ADR-0006). globalSetup builds it once per run.
+        test: {
+          name: "e2e",
+          include: ["test/e2e/**/*.test.ts"],
+          globalSetup: ["test/e2e/helpers/global-setup.ts"],
+          // Tests are independent sandboxes and mostly wait on child processes.
+          sequence: { concurrent: true },
+          testTimeout: 30_000,
+          hookTimeout: 60_000,
         },
       },
       {

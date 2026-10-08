@@ -38,9 +38,10 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --project unit",
+    "test:e2e": "vitest run --project e2e",
     "test:smoke": "npm run build && vitest run --project smoke",
     "schema": "vitest run test/schema.test.ts --project unit --update",
-    "check": "npm run typecheck && npm test && npm run test:smoke"
+    "check": "npm run typecheck && npm test && npm run test:e2e && npm run test:smoke"
   },
   "devDependencies": {
     "@types/node": "20.19.43",
