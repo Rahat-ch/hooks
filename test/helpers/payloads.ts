@@ -57,3 +57,20 @@ export const claudeCode = {
     return payload("Notification", { message, ...overrides });
   },
 };
+
+/**
+ * Payload fields that identify Hosts other than Claude Code, merged into a
+ * Claude Code payload: `claudeCode.bash("ls", hostPayloadFields.cursor)`.
+ * Synthetic, from each Host's docs (see src/hosts/index.ts); captured
+ * payloads replace them as fixtures (#15).
+ */
+export const hostPayloadFields = {
+  cursor: {
+    conversation_id: "test-conversation",
+    generation_id: "test-generation",
+    cursor_version: "1.7.2",
+    workspace_roots: ["/tmp/hardhooks-test/project"],
+  },
+  copilotCli: { timestamp: "2026-01-01T09:00:00.000Z", transcript_path: undefined, permission_mode: undefined },
+  continueCli: { transcript_path: "" },
+} as const;

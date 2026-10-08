@@ -3,14 +3,15 @@
  * Host-visible result out. `hardhooks run <Event>` is a thin wrapper around
  * `dispatch`, and tests drive it directly.
  */
-import { hookSettings, type ResolvedConfig } from "../config";
+import { hookSettings, type PresetName, type ResolvedConfig } from "../config";
 import { formatConfigError, loadConfig, type ConfigError } from "../config/load";
-import { block, combineDecisions, type HookDecision } from "../decision";
+import { block, combineDecisions, type HookDecision, type Outcome } from "../decision";
 import type { Environment } from "../environment";
 import type { EventName, HookEvent } from "../event";
 import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
 import { parseClaudeCodePayload, renderClaudeCodeOutput } from "../hosts/claude-code";
+import { capabilitiesOf } from "../hosts";
 
 export interface DispatchRequest {
   /** The Event named on the command line: `hardhooks run <Event>`. */
@@ -73,7 +74,7 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
   const stderr: string[] = [];
   let event: HookEvent;
   try {
-    event = parseClaudeCodePayload(request.payload, eventName, env.cwd);
+    event = parseClaudeCodePayload(request.payload, eventName, env.cwd, env.env);
   } catch (error) {
     // We can't tell which tool this is, so every Guard on this Event fails closed.
     const decisions = enabled
@@ -102,11 +103,38 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
     }),
   );
 
-  return finish(
+  const outcome = askFallback(
     eventName,
-    results.filter((r): r is HookDecision => r !== undefined),
-    stderr,
+    combineDecisions(results.filter((r): r is HookDecision => r !== undefined)),
+    event.host,
+    config.preset,
   );
+  if (outcome.warning !== undefined) stderr.push(`hardhooks: ${outcome.warning}`);
+  return render(eventName, outcome, stderr);
+}
+
+/**
+ * Where the Host ignores `ask` (Cursor, Devin CLI, ...), an ask would let the
+ * command run unconfirmed. Under `standard` it becomes an allow with a warning
+ * to the user; under `strict` a block.
+ */
+function askFallback(eventName: EventName, outcome: Outcome, host: string, preset: PresetName): Outcome {
+  if (eventName !== "PreToolUse" || outcome.permission !== "ask") return outcome;
+  const { name, ask } = capabilitiesOf(host);
+  if (ask) return outcome;
+  if (preset === "strict") {
+    return {
+      ...outcome,
+      permission: "block",
+      reason: `${name} can't ask for confirmation, so the strict Preset blocks this instead:\n${outcome.reason ?? ""}`,
+    };
+  }
+  return {
+    ...outcome,
+    permission: undefined,
+    reason: undefined,
+    warning: `${name} can't ask for confirmation, so this was allowed under the standard Preset. It needed confirmation because:\n${outcome.reason ?? ""}`,
+  };
 }
 
 /**
@@ -127,7 +155,7 @@ function invalidConfig(
 
   let event: HookEvent | undefined;
   try {
-    event = parseClaudeCodePayload(request.payload, eventName, request.env.cwd);
+    event = parseClaudeCodePayload(request.payload, eventName, request.env.cwd, request.env.env);
   } catch {
     // Unknown tool: every Guard on this Event counts.
   }
@@ -139,6 +167,10 @@ function invalidConfig(
 }
 
 function finish(eventName: string, decisions: readonly HookDecision[], stderr: readonly string[]): HostResult {
-  const stdout = renderClaudeCodeOutput(eventName, combineDecisions(decisions));
+  return render(eventName, combineDecisions(decisions), stderr);
+}
+
+function render(eventName: string, outcome: Outcome, stderr: readonly string[]): HostResult {
+  const stdout = renderClaudeCodeOutput(eventName, outcome);
   return { stdout, stderr: stderr.map((line) => `${line}\n`).join(""), exitCode: 0 };
 }

@@ -7,6 +7,7 @@
  */
 import type { Outcome } from "../decision";
 import type { EventName, HookEvent, ToolKind } from "../event";
+import { detectHost } from "./index";
 
 /** Claude Code tool names by Host-neutral kind. `init` derives matchers from this. */
 export const claudeCodeTools: Readonly<Record<Exclude<ToolKind, "other">, readonly string[]>> = {
@@ -17,19 +18,36 @@ export const claudeCodeTools: Readonly<Record<Exclude<ToolKind, "other">, readon
   search: ["Grep", "Glob"],
 };
 
+/**
+ * Tool names other Hosts put in the payload when running Claude Code hooks
+ * (not used for matchers). Cursor maps `Bash` to `Shell`
+ * (https://cursor.com/docs/reference/third-party-hooks); unverified until
+ * captured fixtures land (#15).
+ */
+const otherHostTools: Readonly<Record<string, ToolKind>> = { Shell: "shell" };
+
 export function toolKind(toolName: string): ToolKind {
   for (const [kind, names] of Object.entries(claudeCodeTools)) {
     if (names.includes(toolName)) return kind as ToolKind;
   }
-  return "other";
+  return otherHostTools[toolName] ?? "other";
 }
 
 const str = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
 
 export class InvalidPayloadError extends Error {}
 
-/** Parse a Claude Code hook payload (stdin) into a Host-neutral Event. */
-export function parseClaudeCodePayload(raw: string, eventName: EventName, fallbackCwd: string): HookEvent {
+/**
+ * Parse a Claude Code hook payload (stdin) into a Host-neutral Event. `env` is
+ * the hook process's environment, used with the payload to detect which Host
+ * sent it.
+ */
+export function parseClaudeCodePayload(
+  raw: string,
+  eventName: EventName,
+  fallbackCwd: string,
+  env: Readonly<Record<string, string | undefined>> = {},
+): HookEvent {
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
@@ -57,7 +75,7 @@ export function parseClaudeCodePayload(raw: string, eventName: EventName, fallba
 
   return {
     name: eventName,
-    host: "claude-code",
+    host: detectHost(p, env),
     cwd: str(p.cwd) ?? fallbackCwd,
     sessionId: str(p.session_id),
     tool,
@@ -105,6 +123,9 @@ export function renderClaudeCodeOutput(eventName: string, outcome: Outcome): str
     }
   }
   if (outcome.context !== undefined && contextEvents.has(eventName)) specific.additionalContext = outcome.context;
+  if (outcome.warning !== undefined) {
+    out.systemMessage = out.systemMessage === undefined ? outcome.warning : `${out.systemMessage}\n${outcome.warning}`;
+  }
 
   if (Object.keys(specific).length > 1) out.hookSpecificOutput = specific;
   return Object.keys(out).length > 0 ? JSON.stringify(out) : "";

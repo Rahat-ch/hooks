@@ -10,6 +10,8 @@ export interface ObservedDecision {
   decision: "block" | "ask" | "allow" | "none";
   reason?: string;
   context?: string;
+  /** A message shown to the user (`systemMessage`), e.g. a warning. */
+  warning?: string;
 }
 
 export function observe(result: HostResult): ObservedDecision {
@@ -19,6 +21,7 @@ export function observe(result: HostResult): ObservedDecision {
   const out = JSON.parse(result.stdout) as {
     decision?: string;
     reason?: string;
+    systemMessage?: string;
     hookSpecificOutput?: {
       permissionDecision?: string;
       permissionDecisionReason?: string;
@@ -37,6 +40,20 @@ export function observe(result: HostResult): ObservedDecision {
     if (specific.permissionDecisionReason !== undefined) observed.reason = specific.permissionDecisionReason;
   }
   if (specific.additionalContext !== undefined) observed.context = specific.additionalContext;
+  if (out.systemMessage !== undefined) observed.warning = out.systemMessage;
+  return observed;
+}
+
+/**
+ * The Host proceeds without a permission Decision (its own prompts apply) but
+ * shows the user a warning (`systemMessage`).
+ */
+export function expectAllowedWithWarning(result: HostResult, warning?: RegExp): ObservedDecision {
+  expect(result.exitCode, result.stderr).toBe(0);
+  const observed = observe(result);
+  expect(observed.decision, result.stdout).toBe("none");
+  expect(observed.warning, result.stdout).toBeTruthy();
+  if (warning) expect(observed.warning).toMatch(warning);
   return observed;
 }
 

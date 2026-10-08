@@ -28,6 +28,8 @@ export interface Outcome {
   readonly reason: string | undefined;
   /** Added context from every Hook, in order. */
   readonly context: string | undefined;
+  /** A message for the user rather than the model, e.g. that the Host couldn't ask. */
+  readonly warning?: string | undefined;
 }
 
 const rank = { allow: 1, ask: 2, block: 3 } as const;
