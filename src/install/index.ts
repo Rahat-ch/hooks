@@ -1,16 +1,15 @@
 /**
- * The install seam: `hardhooks init` and `hardhooks uninstall`. They read and
- * write Host settings files through the injected Environment (project dir,
- * home) and ask for confirmation through `confirm`, so tests run them against
- * temp dirs. The CLI commands only parse flags and call these.
+ * `hardhooks init` and `hardhooks uninstall`. They read and write Host
+ * settings files through the Environment (project dir, home) and ask for
+ * confirmation through `confirm`. The CLI commands only parse flags and call
+ * these.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { formatConfigError, loadConfig } from "../config/load";
 import type { Environment } from "../environment";
 import { isGitIgnored } from "../git";
-import type { Hook } from "../hooks/hook";
-import { hooks as registeredHooks } from "../hooks/registry";
+import { hooks } from "../hooks/registry";
 import { pathUnder } from "../paths";
 import { projectRoot } from "../project";
 import { untrustedNote } from "../trust/command";
@@ -43,11 +42,7 @@ export interface InstallRequest {
   confirm(question: string): Promise<boolean>;
   stdout(text: string): void;
   stderr(text: string): void;
-  /** Hooks to consider. Defaults to the built-in registry; tests may inject their own. */
-  hooks?: readonly Hook<any>[];
 }
-
-
 
 /**
  * The settings file for a scope. `user`: `$CLAUDE_CONFIG_DIR/settings.json`,
@@ -111,12 +106,12 @@ function readSettingsFile(path: string): SettingsFile {
     throw new SettingsError(`${path} is not a JSON object; fix it by hand first`);
   }
   // Rewriting a malformed `hooks` could lose the user's intent, so leave it to them.
-  const { hooks } = settings as { hooks?: unknown };
-  if (hooks !== undefined) {
-    if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) {
+  const { hooks: groupsByEvent } = settings as { hooks?: unknown };
+  if (groupsByEvent !== undefined) {
+    if (typeof groupsByEvent !== "object" || groupsByEvent === null || Array.isArray(groupsByEvent)) {
       throw new SettingsError(`${path}: "hooks" is not an object; fix it by hand first`);
     }
-    for (const [event, groups] of Object.entries(hooks)) {
+    for (const [event, groups] of Object.entries(groupsByEvent)) {
       if (!Array.isArray(groups)) {
         throw new SettingsError(`${path}: hooks.${event} is not a list of matcher groups; fix it by hand first`);
       }
@@ -214,7 +209,6 @@ function describeEntry(entry: Entry): string {
  */
 export async function init(request: InstallRequest): Promise<number> {
   const { env, stderr } = request;
-  const hooks = request.hooks ?? registeredHooks;
   const loaded = loadConfig(env, hooks);
   if (!loaded.ok) {
     for (const error of loaded.errors) stderr(`hardhooks: invalid config: ${formatConfigError(error)}\n`);

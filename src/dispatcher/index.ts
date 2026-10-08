@@ -1,7 +1,7 @@
 /**
- * The dispatcher entry seam: one Host payload for one Event in, the
- * Host-visible result out. `hardhooks run <Event>` is a thin wrapper around
- * `dispatch`, and tests drive it directly.
+ * The dispatcher: one Host payload for one Event in, the Host-visible result
+ * out. `hardhooks run <Event>` is a thin wrapper around `dispatch`, and
+ * `hardhooks test` replays its cases through it.
  */
 import { hookSettings, type PresetName, type ResolvedConfig } from "../config";
 import { formatConfigError, loadConfig, type ConfigError } from "../config/load";
@@ -9,7 +9,7 @@ import { block, combineDecisions, message, type HookDecision, type Outcome } fro
 import type { Environment } from "../environment";
 import type { EventName, HookEvent } from "../event";
 import { activeEvents, type Hook, type HookRun } from "../hooks/hook";
-import { hooks as registeredHooks } from "../hooks/registry";
+import { hooks } from "../hooks/registry";
 import { parseClaudeCodePayload, renderClaudeCodeOutput } from "../hosts/claude-code";
 import { capabilitiesOf } from "../hosts";
 import { noticeDue, trustStatus, untrustedReason, type TrustStatus } from "../trust";
@@ -20,16 +20,18 @@ export interface DispatchRequest {
   /** The raw Host payload, exactly as read from stdin. */
   payload: string;
   /**
-   * The resolved config. Omit it to load `.hardhooks.json` and the user config
-   * through `env`, as `hardhooks run` does.
+   * The resolved config, for `hardhooks test`, which resolves it once for all
+   * its cases. Omit it to load `.hardhooks.json` and the user config through
+   * `env`, as `hardhooks run` does.
    */
   config?: ResolvedConfig;
   env: Environment;
-  /** Hooks to consider. Defaults to the built-in registry; tests may inject their own. */
-  hooks?: readonly Hook<any>[];
   /**
    * Whether the project's own commands may run (ADR-0005). Omit to look it up
    * as `hardhooks trust` recorded it in `env.stateDir`, for the Event's project.
+   * `hardhooks test` passes the trust of the project it runs in, because its
+   * cases' payloads may name another project directory (shipped fixtures use a
+   * fake one) and its sandboxed state dir holds no trust records.
    */
   trusted?: boolean;
 }
@@ -92,7 +94,6 @@ function handlesTool(hook: Hook<any>, event: HookEvent): boolean {
 export async function dispatch(request: DispatchRequest): Promise<HostResult> {
   const { env } = request;
   const eventName = request.event as EventName;
-  const hooks = request.hooks ?? registeredHooks;
   const loaded = request.config ? { ok: true as const, config: request.config } : loadConfig(env, hooks);
   if (!loaded.ok) return invalidConfig(eventName, request, hooks, loaded.errors);
   const { config } = loaded;

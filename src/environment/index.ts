@@ -30,7 +30,8 @@ export interface ProcessResult {
 
 /**
  * How Hooks run external programs (git, formatters, check commands, notifiers).
- * Injected so tests can record calls or run real tools in temp dirs.
+ * The CLI runs real processes (`nodeProcessRunner`); `hardhooks test` swaps in
+ * a sandbox that runs nothing (`src/testing/sandbox.ts`).
  */
 export interface ProcessRunner {
   run(command: string, args: readonly string[], options?: RunOptions): Promise<ProcessResult>;
@@ -72,9 +73,9 @@ export function defaultStateDir(
 /**
  * The clock the CLI runs with: the real one, unless `HARDHOOKS_NOW` holds a
  * date (ISO 8601, e.g. `2026-01-01T09:00:00Z`), which then stands still.
- * A testing and debugging knob, so tests of the real CLI get a fixed "now"
- * (the session-context date, notify's turn length, audit-log's day). An
- * unparseable value is ignored.
+ * A testing and debugging knob (ADR-0006), so tests of the real CLI get a
+ * fixed "now" (the session-context date, notify's turn length, audit-log's
+ * day). An unparseable value is ignored.
  */
 export function processClock(env: Readonly<Record<string, string | undefined>>): Clock {
   const fixed = env.HARDHOOKS_NOW ? Date.parse(env.HARDHOOKS_NOW) : Number.NaN;

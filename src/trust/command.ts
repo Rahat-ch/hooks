@@ -1,5 +1,5 @@
 /**
- * The `hardhooks trust` seam (ADR-0005): show what trusting the project
+ * `hardhooks trust` (ADR-0005): show what trusting the project
  * would let hardhooks run, ask, and record it; or revoke it, or report it.
  * The CLI command only parses flags and calls `trust`.
  */
@@ -7,7 +7,7 @@ import { hookSettings, type ResolvedConfig } from "../config";
 import { formatConfigError, loadConfig } from "../config/load";
 import type { Environment } from "../environment";
 import type { Hook } from "../hooks/hook";
-import { hooks as registeredHooks } from "../hooks/registry";
+import { hooks } from "../hooks/registry";
 import { grantTrust, revokeTrust, trustStatus, type TrustInput, type TrustStatus } from "./index";
 
 export type TrustAction = "grant" | "revoke" | "status";
@@ -24,8 +24,6 @@ export interface TrustRequest {
   confirm(question: string): Promise<boolean>;
   stdout(text: string): void;
   stderr(text: string): void;
-  /** Hooks to consider. Defaults to the built-in registry; tests may inject their own. */
-  hooks?: readonly Hook<any>[];
 }
 
 /**
@@ -44,7 +42,6 @@ export async function trust(request: TrustRequest): Promise<number> {
     return 0;
   }
 
-  const hooks = request.hooks ?? registeredHooks;
   const loaded = loadConfig(env, hooks);
   if (!loaded.ok) {
     for (const error of loaded.errors) request.stderr(`hardhooks: invalid config: ${formatConfigError(error)}\n`);

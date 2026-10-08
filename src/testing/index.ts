@@ -1,8 +1,8 @@
 /**
- * The `hardhooks test` seam: run the shipped fixtures and the user's case
- * files through the dispatcher (`dispatch`, the same seam as `hardhooks run`
- * and the project's own tests) against the resolved config, print a pass/fail
- * report, and resolve to the exit code (non-zero on any failure, for CI).
+ * `hardhooks test`: run the shipped fixtures and the user's case files
+ * through the dispatcher (`dispatch`, as `hardhooks run` does) against the
+ * resolved config, print a pass/fail report, and resolve to the exit code
+ * (non-zero on any failure, for CI).
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,9 +12,8 @@ import { formatConfigError, loadConfig } from "../config/load";
 import { dispatch } from "../dispatcher";
 import type { Environment } from "../environment";
 import type { Hook } from "../hooks/hook";
-import { hooks as registeredHooks } from "../hooks/registry";
+import { hooks } from "../hooks/registry";
 import { parseCaseFile, type TestCase } from "./cases";
-import type { FixtureFile } from "./fixture-files";
 import { trustStatus } from "../trust";
 import { untrustedNote } from "../trust/command";
 import { installWarnings } from "./install-check";
@@ -29,10 +28,6 @@ export interface TestRequest {
   casesPath?: string;
   stdout(text: string): void;
   stderr(text: string): void;
-  /** Hooks to consider. Defaults to the built-in registry; tests may inject their own. */
-  hooks?: readonly Hook<any>[];
-  /** The shipped fixtures. Defaults to the ones in this build; tests may inject their own. */
-  fixtures?: readonly FixtureFile[];
 }
 
 /** The fake project directory that shipped fixtures without a captured payload run in. */
@@ -48,7 +43,6 @@ interface Outcome {
 /** `hardhooks test`. Resolves to the exit code. */
 export async function runTests(request: TestRequest): Promise<number> {
   const { env, stdout, stderr } = request;
-  const hooks = request.hooks ?? registeredHooks;
   const loaded = loadConfig(env, hooks);
   if (!loaded.ok) {
     for (const error of loaded.errors) stderr(`hardhooks: invalid config: ${formatConfigError(error)}\n`);
@@ -79,7 +73,7 @@ export async function runTests(request: TestRequest): Promise<number> {
     };
 
     stdout("Shipped fixtures\n");
-    for (const fixture of request.fixtures ?? shippedFixtureFiles()) {
+    for (const fixture of shippedFixtureFiles()) {
       const label = `${fixture.hook}/${fixture.file.replace(/\.json$/, "")}`;
       const parsed = parseCaseFile(fixture.text, `${fixture.hook}/fixtures/${fixture.file}`, { kind: "fixture", cwd: fixtureCwd });
       if (!parsed.ok) {
@@ -90,14 +84,14 @@ export async function runTests(request: TestRequest): Promise<number> {
       for (const testCase of parsed.cases) {
         const skip = hook === undefined ? `no Hook named ${fixture.hook}` : skipReason(hook, config, testCase);
         if (skip !== undefined) print({ status: "skip", label, name: testCase.name, detail: [skip] });
-        else print(outcome(label, testCase, await runCase(testCase, config, fixtureEnv, hooks, trusted)));
+        else print(outcome(label, testCase, await runCase(testCase, config, fixtureEnv, trusted)));
       }
     }
 
     stdout(`\nYour cases (${userCases.location})\n`);
     if (userCases.cases.length === 0) stdout(`  none: add *.json case files there, or pass --cases <path>\n`);
     for (const testCase of userCases.cases) {
-      print(outcome(testCase.source, testCase, await runCase(testCase, config, caseEnv, hooks, trusted)));
+      print(outcome(testCase.source, testCase, await runCase(testCase, config, caseEnv, trusted)));
     }
 
     // Warnings, not failures: CI checks out a repo where nothing is installed for the Host.
@@ -136,11 +130,10 @@ async function runCase(
   testCase: TestCase,
   config: ResolvedConfig,
   env: Environment,
-  hooks: readonly Hook<any>[],
   trusted: boolean,
 ): Promise<CaseResult> {
   const caseEnv = testCase.hostEnv === undefined ? env : { ...env, env: { ...env.env, ...testCase.hostEnv } };
-  const result = await dispatch({ event: testCase.event, payload: JSON.stringify(testCase.payload), config, env: caseEnv, hooks, trusted });
+  const result = await dispatch({ event: testCase.event, payload: JSON.stringify(testCase.payload), config, env: caseEnv, trusted });
   return judge(result, testCase.expect);
 }
 

@@ -38,11 +38,6 @@ export interface ResolvedConfig {
   untrustedHooks?: Readonly<Record<string, HookOverrides | undefined>>;
 }
 
-/** No config files: the `standard` Preset with no overrides. */
-export function defaultConfig(): ResolvedConfig {
-  return { preset: "standard", hooks: {} };
-}
-
 /** A Hook's effective settings: its Preset defaults with config overrides on top. */
 export function hookSettings<Options>(hook: Hook<Options>, config: ResolvedConfig): HookSettings<Options> {
   const defaults = hook.defaults[config.preset];
