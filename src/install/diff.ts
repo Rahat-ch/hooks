@@ -27,10 +27,10 @@ function diffLines(a: readonly string[], b: readonly string[]): Op[] {
     if (i < n && j < m && a[i] === b[j]) {
       ops.push({ kind: " ", line: a[i++]! });
       j++;
-    } else if (j < m && (i === n || lcs[i]![j + 1]! >= lcs[i + 1]![j]!)) {
-      ops.push({ kind: "+", line: b[j++]! });
-    } else {
+    } else if (i < n && (j === m || lcs[i + 1]![j]! >= lcs[i]![j + 1]!)) {
       ops.push({ kind: "-", line: a[i++]! });
+    } else {
+      ops.push({ kind: "+", line: b[j++]! });
     }
   }
   return ops;
