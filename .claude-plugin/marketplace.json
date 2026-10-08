@@ -1,0 +1,19 @@
+{
+  "name": "hardhooks",
+  "description": "hardhooks: deterministic guardrails for nondeterministic agents.",
+  "owner": {
+    "name": "Rahat Chowdhury",
+    "url": "https://github.com/Rahat-ch"
+  },
+  "plugins": [
+    {
+      "name": "hardhooks",
+      "description": "Deterministic guardrails for nondeterministic agents: tested, configurable hooks for AI coding agents.",
+      "source": {
+        "source": "npm",
+        "package": "hardhooks"
+      },
+      "category": "security"
+    }
+  ]
+}

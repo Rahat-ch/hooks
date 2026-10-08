@@ -10,7 +10,9 @@
   "files": [
     "dist",
     "examples",
-    "hardhooks.schema.json"
+    "hardhooks.schema.json",
+    ".claude-plugin/plugin.json",
+    "hooks"
   ],
   "engines": {
     "node": ">=20"

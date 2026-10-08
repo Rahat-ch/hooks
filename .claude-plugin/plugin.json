@@ -1,0 +1,13 @@
+{
+  "name": "hardhooks",
+  "version": "0.0.0",
+  "description": "Deterministic guardrails for nondeterministic agents: tested, configurable hooks for AI coding agents.",
+  "author": {
+    "name": "Rahat Chowdhury",
+    "url": "https://github.com/Rahat-ch"
+  },
+  "homepage": "https://github.com/Rahat-ch/hooks",
+  "repository": "https://github.com/Rahat-ch/hooks",
+  "license": "MIT",
+  "keywords": ["hooks", "guardrails", "git", "security"]
+}
