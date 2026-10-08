@@ -171,7 +171,7 @@ function words(text: string): string[] {
  * the previous pipeline stage or the `find` names, e.g. `.env` in
  * `find . -name .env | xargs cat`.
  */
-function fedArguments(command: SimpleCommand, previous: readonly SimpleCommand[]): readonly string[] {
+export function fedArguments(command: SimpleCommand, previous: readonly SimpleCommand[]): readonly string[] {
   if (namesOnly.has(command.program) || command.program === "find") return [];
   const args: string[] = [];
   if (command.via.includes("xargs")) args.push(...(command.pipedFrom ?? []).flatMap((c) => c.argv.slice(1)));

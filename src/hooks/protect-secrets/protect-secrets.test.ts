@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, it } from "vitest";
 import {
   claudeCode,
+  expectAsked,
   expectBlocked,
   expectFixture,
   expectNoDecision,
@@ -333,6 +334,105 @@ describe("protect-secrets", () => {
         expectBlocked(await runEvent(at(claudeCode.bash(command)), { env: windows() }), /protected pattern/);
       },
     );
+  });
+
+  describe("hardhooks' own trust state", () => {
+    /** An environment whose state dir sits under home with a space in it, as on macOS. */
+    function macEnv() {
+      const env = fakeEnvironment();
+      return { ...env, stateDir: join(env.home, "Library", "Application Support", "hardhooks", "state") };
+    }
+
+    describe("asks before an agent grants trust itself", () => {
+      it.each([
+        "hardhooks trust",
+        "hardhooks trust --yes",
+        "hardhooks trust -y",
+        "env -u CLAUDECODE hardhooks trust --yes",
+        "CLAUDECODE= hardhooks trust --yes",
+        "npx hardhooks trust --yes",
+        "npx -y hardhooks@latest trust --yes",
+        "npm exec -- hardhooks trust --yes",
+        "pnpm dlx hardhooks trust --yes",
+        "node ./node_modules/hardhooks/dist/hardhooks.mjs trust --yes",
+        "node /opt/plugins/hardhooks/dist/hardhooks.mjs trust",
+        "./node_modules/.bin/hardhooks trust --yes",
+        'bash -c "hardhooks trust --yes"',
+        "sudo -E hardhooks trust --yes",
+        "yes | script -q /dev/null hardhooks trust",
+        "H=hardhooks; $H trust --yes",
+        "cd sub && hardhooks trust --yes",
+      ])("`%s`", async (command) => {
+        expectAsked(await runEvent(claudeCode.bash(command)), /run `hardhooks trust` themselves/);
+      });
+    });
+
+    it.each([
+      "hardhooks trust --status",
+      "hardhooks trust --revoke",
+      "npx hardhooks trust --status",
+      "hardhooks test",
+      "hardhooks init --dry-run",
+      'git commit -m "docs: explain hardhooks trust --yes"',
+      "echo run hardhooks trust yourself",
+      "grep -rn 'hardhooks trust' README.md",
+    ])("allows `%s`", async (command) => {
+      expectNoDecision(await runEvent(claudeCode.bash(command)));
+    });
+
+    it("blocks writing or editing files in the state dir, but allows reading them", async () => {
+      const env = macEnv();
+      const record = join(env.stateDir, "trust", "projects", "abc.json");
+      expectBlocked(await runEvent(write(record), { env }), /hardhooks' own state/);
+      expectBlocked(await runEvent(edit(record), { env }), /hardhooks' own state/);
+      expectNoDecision(await runEvent(read(record), { env }));
+      expectNoDecision(await runEvent(claudeCode.preToolUse("Grep", { pattern: "root", path: env.stateDir }), { env }));
+    });
+
+    it("blocks writing the user config, whose commands always run", async () => {
+      const env = fakeEnvironment();
+      expectBlocked(await runEvent(write(join(env.home, ".config", "hardhooks", "config.json")), { env }), /hardhooks' own state/);
+      expectNoDecision(await runEvent(read(join(env.home, ".config", "hardhooks", "config.json")), { env }));
+    });
+
+    describe("blocks shell writes into the state dir", () => {
+      const state = "~/Library/Application\\ Support/hardhooks/state";
+      it.each([
+        `echo '{}' > ${state}/trust/projects/abc.json`,
+        `echo '{}' > "$HOME/Library/Application Support/hardhooks/state/trust/projects/abc.json"`,
+        `printf x | tee -a ${state}/trust/projects/abc.json`,
+        `cp /tmp/forged.json ${state}/trust/projects/abc.json`,
+        `cp -t ${state}/trust/projects /tmp/forged.json`,
+        `mv /tmp/forged.json ${state}/trust/projects/`,
+        `rm -rf ${state}/trust`,
+        `cd ${state}/trust/projects && echo '{}' > abc.json`,
+        `cd ${state} && rm -rf trust`,
+        `mkdir -p ${state}/trust/projects`,
+        `touch ${state}/trust/notices/x`,
+        `sed -i '' s/a/b/ ${state}/trust/projects/abc.json`,
+        `find ${state} -name '*.json' -delete`,
+        `find ${state} -name '*.json' | xargs rm`,
+        `node -e "require('fs').writeFileSync('${state.replace("\\ ", " ")}/trust/projects/abc.json', '{}')"`,
+        `python3 -c "open('$HOME/Library/Application Support/hardhooks/state/trust/x.json', 'w')"`,
+        `bash -c "echo x > ${state}/trust/projects/abc.json"`,
+      ])("`%s`", async (command) => {
+        const env = macEnv();
+        expectBlocked(await runEvent(claudeCode.bash(command), { env }), /hardhooks' own state/);
+      });
+    });
+
+    it.each([
+      "cat ~/Library/Application\\ Support/hardhooks/state/trust/projects/abc.json",
+      "ls -la ~/Library/Application\\ Support/hardhooks/state/trust/projects",
+      "tail -n 20 ~/Library/Application\\ Support/hardhooks/state/audit/x.jsonl",
+      "jq . ~/Library/Application\\ Support/hardhooks/state/audit/x.jsonl | head",
+      "grep -c deny ~/Library/Application\\ Support/hardhooks/state/audit/x.jsonl",
+      "cp ~/Library/Application\\ Support/hardhooks/state/audit/x.jsonl ./replay.json",
+      "cd ~/Library/Application\\ Support/hardhooks/state && ls",
+      "echo hi > notes.txt",
+    ])("allows reading the state dir: `%s`", async (command) => {
+      expectNoDecision(await runEvent(claudeCode.bash(command), { env: macEnv() }));
+    });
   });
 
   it.each(loadFixtures(new URL("./fixtures", import.meta.url)))("fixture $file: $description", async (fixture) => {

@@ -144,6 +144,7 @@ Keeps the Host from reading or writing secrets.
   - `~/.kube/config` and `~/.docker/config.json`;
   - `.netrc`, `.pgpass`, `~/.git-credentials`, `~/.npmrc` and `~/.pypirc`.
 - **Also protected:** the patterns in `.claudeignore`, `.cursorignore` and `.aiignore` at the project root.
+- **hardhooks' own state:** writes into hardhooks' state directory (trust records, audit log) and its user config are blocked; reading them is fine. A `hardhooks trust` that would grant [trust](#trust) asks you first.
 - **How it checks:** file tools by their path, search tools by their path and file glob, and shell commands by every operand and redirection of every command that executes. Metadata-only programs such as `ls` and `stat` are allowed, and so is a broad search that doesn't target a protected path. The block reason names the pattern that matched.
 
 | Option | Type | Default (both Presets) | |
@@ -298,7 +299,7 @@ hardhooks trust --status   # trusted, not trusted, or changed since you trusted 
 hardhooks trust --revoke   # forget the project
 ```
 
-`--yes` skips the question, but is refused when run from inside Claude Code, so the agent can't trust a project for you.
+`--yes` skips the question, but is refused when run from inside Claude Code. The agent can't trust a project for you in other ways either: [protect-secrets](#protect-secrets) asks you before any `hardhooks trust` the agent runs that would grant trust, however it is wrapped (`npx`, `node …/hardhooks.mjs`, `env -u CLAUDECODE`, `bash -c`), and blocks it from writing hardhooks' state directory (where trust is recorded) or your user config. `--status` and `--revoke` are not affected.
 
 Until you trust a project, those commands are skipped and the Host shows a one-line notice once per session. Nothing is blocked, and everything else works as usual, including all three Guards. Commands set in your user config always run.
 

@@ -11,17 +11,25 @@
  * - Shell commands are checked through `analyzeShell` (see `./shell.ts`):
  *   any executing command whose operand or redirection names a protected path
  *   is blocked, except metadata-only programs such as `ls` and `stat`.
+ * - Guards hardhooks' own trust state too (see `./own-state.ts`): writes
+ *   into the state dir or the user config are blocked, and `hardhooks trust`
+ *   run by the agent asks the user.
  * - Blocks input it can't analyse, and blocks when an ignore file exists but
  *   can't be read (ADR-0004).
  */
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { block } from "../../decision";
+import { block, type Decision } from "../../decision";
 import * as s from "../../config/schema";
 import { defaultIgnoreFiles, resolvePath, secretsMatcher, type SecretMatch } from "../../secrets";
 import { analyzeShell } from "../../shell";
 import { defineHook } from "../hook";
+import { ownStateShellFinding, ownStateWrite, type OwnStateFinding } from "./own-state";
 import { shellFinding } from "./shell";
+
+function decision(finding: OwnStateFinding): Decision {
+  return finding.decision === "block" ? block(finding.reason) : { kind: "ask", reason: finding.reason };
+}
 
 export interface ProtectSecretsOptions {
   protect: string[];
@@ -95,11 +103,15 @@ export const protectSecrets = defineHook<ProtectSecretsOptions>({
         );
       }
       const finding = shellFinding(analysis.commands, event.cwd, matcher);
-      return finding ? block(reasonFor(finding.operand, finding.match)) : undefined;
+      if (finding) return block(reasonFor(finding.operand, finding.match));
+      const own = ownStateShellFinding(analysis.commands, event.cwd, env);
+      return own && decision(own);
     }
     if (tool.filePath !== undefined) {
       const match = matcher.match(tool.filePath, event.cwd);
       if (match) return block(reasonFor(tool.filePath, match));
+      const own = tool.kind === "edit" || tool.kind === "write" ? ownStateWrite(tool.filePath, event.cwd, env) : undefined;
+      if (own) return decision(own);
     }
     // A content search's file filter (`glob` on Claude Code's Grep) selecting secrets reads them too.
     const glob = tool.kind === "search" ? tool.input.glob : undefined;
