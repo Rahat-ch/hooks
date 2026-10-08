@@ -8,6 +8,7 @@ import { check } from "./check";
 import { formatOnEdit } from "./format-on-edit";
 import { gitGuard } from "./git-guard";
 import { notify } from "./notify";
+import { protectSecrets } from "./protect-secrets";
 import { sessionContext } from "./session-context";
 
 export const hooks: readonly Hook<any>[] = [
@@ -16,5 +17,6 @@ export const hooks: readonly Hook<any>[] = [
   formatOnEdit,
   gitGuard,
   notify,
+  protectSecrets,
   sessionContext,
 ];
