@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ProcessResult, ProcessRunner, RunOptions } from "./index";
 
 function childEnv(env: RunOptions["env"]): NodeJS.ProcessEnv | undefined {
@@ -23,18 +23,30 @@ export const nodeProcessRunner: ProcessRunner = {
         resolve(result);
       };
 
-      const child = spawn(command, [...args], {
-        cwd: options.cwd,
-        env: childEnv(options.env),
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawn(command, [...args], {
+          cwd: options.cwd,
+          env: childEnv(options.env),
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+        });
+      } catch (error) {
+        // Some failures throw instead of emitting "error", e.g. EINVAL for a .cmd/.bat on Windows.
+        resolve({ exitCode: null, stdout, stderr, timedOut, spawnError: (error as Error).message });
+        return;
+      }
       const timer =
         options.timeoutMs === undefined
           ? undefined
           : setTimeout(() => {
               timedOut = true;
               child.kill("SIGKILL");
+              // Don't wait for "close": a grandchild that inherited stdout/stderr (e.g. a native
+              // binary behind an npm wrapper) would hold the pipes open past the kill.
+              child.stdout.destroy();
+              child.stderr.destroy();
+              finish({ exitCode: null, stdout, stderr, timedOut });
             }, options.timeoutMs);
 
       child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));

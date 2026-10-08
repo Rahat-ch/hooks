@@ -20,6 +20,29 @@
       "description": "Per-Hook overrides: `enabled` plus that Hook's options. Anything left out comes from the Preset.",
       "type": "object",
       "properties": {
+        "format-on-edit": {
+          "description": "Formats each file the Host edits or writes with the project's own formatter.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "command": {
+              "description": "Format every edited file with this command instead of detecting a formatter, e.g. [\"black\", \"--quiet\", \"{file}\"]. Run without a shell from the project directory; `{file}` is replaced by the edited file's absolute path, which is appended when absent. On Windows name an executable (.exe), not a .cmd/.bat shim.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeoutMs": {
+              "description": "Give up on the formatter after this many milliseconds, leaving the file as it is.",
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
         "git-guard": {
           "description": "Blocks git commands that rewrite shared history, destroy uncommitted work or skip git hooks.",
           "type": "object",

@@ -1,0 +1,16 @@
+{
+  "description": "a Write is never answered with a Decision or context, formatted or not",
+  "event": "PostToolUse",
+  "payload": {
+    "session_id": "fixture-session",
+    "transcript_path": "/home/user/.claude/projects/demo/transcript.jsonl",
+    "cwd": "/home/user/demo",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Write",
+    "tool_input": { "file_path": "/home/user/demo/src/index.ts", "content": "export const  answer=42\n" },
+    "tool_response": { "type": "create", "filePath": "/home/user/demo/src/index.ts" },
+    "tool_use_id": "toolu_fixture"
+  },
+  "expect": { "decision": "none" }
+}
