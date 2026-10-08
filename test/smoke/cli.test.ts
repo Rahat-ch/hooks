@@ -5,7 +5,7 @@
  * dispatcher-seam tests.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +49,44 @@ describe("hardhooks CLI (bundled)", () => {
       expectNoDecision(hardhooks(["run", "PreToolUse"], forcePush, [], { cwd: root, env }));
       writeFileSync(join(root, ".hardhooks.json"), JSON.stringify({ hooks: { "git-guard": { enabled: "no" } } }));
       expectBlocked(hardhooks(["run", "PreToolUse"], forcePush, [], { cwd: root, env }), /hooks\.git-guard\.enabled/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("`init` writes a settings entry that runs this bundle, and `uninstall` removes it", () => {
+    const root = mkdtempSync(join(tmpdir(), "hardhooks-smoke-"));
+    try {
+      const project = join(root, "project");
+      mkdirSync(project);
+      const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, USERPROFILE: root, XDG_CONFIG_HOME: join(root, "config"), APPDATA: join(root, "config") };
+      delete env.CLAUDE_CONFIG_DIR;
+      const settingsFile = join(project, ".claude", "settings.json");
+
+      const declined = hardhooks(["init"], "n\n", [], { cwd: project, env });
+      expect(declined.stdout).toMatch(/^\+.*"PreToolUse"/m);
+      expect(existsSync(settingsFile)).toBe(false);
+
+      const accepted = hardhooks(["init"], "y\n", [], { cwd: project, env });
+      expect(accepted.exitCode, accepted.stderr).toBe(0);
+      const settings = JSON.parse(readFileSync(settingsFile, "utf8"));
+      const [group] = settings.hooks.PreToolUse;
+      expect(group.matcher).toContain("Bash");
+      const [handler] = group.hooks;
+      expect(handler).toEqual({ type: "command", command: "node", args: [realpathSync(bundle), "run", "PreToolUse"] });
+
+      // Run the written command the way the Host would (exec form: no shell).
+      const forcePush = spawnSync(handler.command, handler.args, {
+        input: JSON.stringify(claudeCode.bash("git push --force origin main")),
+        encoding: "utf8",
+        cwd: project,
+        env,
+      });
+      expectBlocked({ stdout: forcePush.stdout, stderr: forcePush.stderr, exitCode: forcePush.status ?? -1 }, /force/i);
+
+      const removed = hardhooks(["uninstall", "--yes"], "", [], { cwd: project, env });
+      expect(removed.exitCode, removed.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(settingsFile, "utf8"))).toEqual({});
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -3,6 +3,7 @@ export * from "./decisions";
 export * from "./environment";
 export * from "./fixtures";
 export * from "./git";
+export * from "./install";
 export * from "./payloads";
 export * from "./real-git-repo";
 export * from "./run";
