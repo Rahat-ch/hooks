@@ -38,6 +38,23 @@
             "enabled": {
               "description": "Run this Hook. The default comes from the Preset.",
               "type": "boolean"
+            },
+            "files": {
+              "description": "Files, relative to the project, whose contents are added after the git summary. They share its 1 KB budget.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "commands": {
+              "description": "Commands whose output is added after the files, each an argument list run without a shell, e.g. [\"gh\", \"pr\", \"list\"]. They share the 1 KB budget.",
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           },
           "additionalProperties": false

@@ -24,9 +24,13 @@ async function runGit(
   args: readonly string[],
   timeoutMs = defaultTimeoutMs,
 ): Promise<string | undefined> {
-  // --no-optional-locks: never contend for index.lock with the user's own git.
-  const result = await runner.run("git", ["--no-optional-locks", ...args], { cwd, timeoutMs });
-  return result.exitCode === 0 ? result.stdout : undefined;
+  try {
+    // --no-optional-locks: never contend for index.lock with the user's own git.
+    const result = await runner.run("git", ["--no-optional-locks", ...args], { cwd, timeoutMs });
+    return result.exitCode === 0 ? result.stdout : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Branch, upstream ahead/behind and dirty paths, from `git status --porcelain=v2`. */
