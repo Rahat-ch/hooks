@@ -93,7 +93,7 @@ export const protectSecrets = defineHook<ProtectSecretsOptions>({
             "Fix the syntax or split it into simpler commands.",
         );
       }
-      const finding = shellFinding(analysis.commands, event.cwd, env.home, matcher);
+      const finding = shellFinding(analysis.commands, event.cwd, matcher);
       return finding ? block(reasonFor(finding.operand, finding.match)) : undefined;
     }
     if (tool.filePath !== undefined) {

@@ -4,9 +4,14 @@
  * The shared deep module behind every Guard. It parses bash syntax with
  * `unbash` and returns a flat list of simple commands, after unwrapping
  * everything that merely launches another command: `bash -c`, `env`, `sudo`,
- * `xargs`, `eval`, command substitution, pipelines, lists and so on. Text that
- * is only data (heredoc bodies, quoted arguments such as commit messages,
- * comments) never produces an executing command.
+ * `xargs`, `eval`, `su -c`, `watch`, command substitution, pipelines, lists and
+ * so on. Text that is only data (heredoc bodies, quoted arguments such as
+ * commit messages, comments) never produces an executing command.
+ *
+ * A script string that holds run-time values (`bash -c "git push -f $R"`,
+ * `eval "rm -rf $X/"`) is still analysed, as written: its commands are listed
+ * with every word touching such a value marked dynamic, and the launching
+ * shell or `eval` is listed too, since part of what it runs is unseen.
  *
  * Guards should depend only on this file's exports.
  */
@@ -60,8 +65,10 @@ export interface SimpleCommand {
   readonly cwd: string | undefined;
   /**
    * Some of `argv` could not be determined statically: an unresolved
-   * `$VAR`/`$(...)`, a glob-free but unknowable word, or arguments `xargs`
-   * will append. Such entries hold their source text.
+   * `$VAR`/`$(...)` (also one an enclosing `bash -c`/`eval` string
+   * substitutes, even inside quotes), a `{}` that `find -exec`/`xargs -I`
+   * fills in, a glob-free but unknowable word, or arguments `xargs` will
+   * append. Such entries hold their source text.
    */
   readonly dynamic: boolean;
   /** Wrapper programs that launched this command, outermost first, e.g. `["sudo", "bash"]` for `sudo bash -c "..."`. */

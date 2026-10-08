@@ -113,6 +113,20 @@ describe("shell analysis, as seen by a Guard", () => {
     expectBlocked((await run("find . -name node_modules -exec rm -rf {} +", rmGuard)).result, /\(dynamic\)/);
   });
 
+  it("sees into shell and eval strings that hold run-time values, marking those words dynamic", async () => {
+    expectBlocked((await run('bash -c "rm -rf build $X"', rmGuard)).result, /rm -rf build \$X in .* \(dynamic\)/);
+    expectBlocked((await run('eval "rm -rf $(cat dirs)"', rmGuard)).result, /rm -rf \$\(cat dirs\) in .* \(dynamic\)/);
+    // The outer shell substitutes before the inner one parses: quotes or an inner assignment can't make it static.
+    expectBlocked((await run("bash -c \"rm -rf '$X'\"", rmGuard)).result, /rm -rf \$X in .* \(dynamic\)/);
+    expectBlocked((await run('sh -c "X=build; rm -rf $X"', rmGuard)).result, /rm -rf \$X in .* \(dynamic\)/);
+    expectBlocked((await run("xargs -I % sh -c 'rm -rf %'", rmGuard)).result, /rm -rf % in .* \(dynamic\)/);
+    expectBlocked((await run("find . -exec sh -c 'rm -rf {}' \\;", rmGuard)).result, /rm -rf \{\} in .* \(dynamic\)/);
+    expectBlocked((await run("bash -c 'rm -rf build'", rmGuard)).result, /rm -rf build in [^(]*$/);
+    expectBlocked((await run('bash -c "if true; then rm -rf $X"', rmGuard)).result, /couldn't be analysed/);
+    expectNoDecision((await run('bash -c "echo rm -rf $X"', rmGuard)).result);
+    expectNoDecision((await run("bash -c \"git commit -m 'rm -rf build' $X\"", rmGuard)).result);
+  });
+
   it("does not mistake data for commands", async () => {
     for (const command of [
       'echo "rm -rf /"',
