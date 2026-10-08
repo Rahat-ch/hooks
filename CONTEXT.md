@@ -31,3 +31,11 @@ _Avoid_: verdict, response, output
 **Preset**:
 A named bundle of which Hooks are enabled and how strictly Guards behave, such as `standard` or `strict`.
 _Avoid_: profile, level, mode
+
+**Project command**:
+A command hardhooks would run because the project chose it: a command option in the repo's `.hardhooks.json`, or one a Hook autodetects from the project's files. One from the user's own config is not a Project command.
+_Avoid_: repo command, detected command
+
+**Trust**:
+A user's per-project permission for hardhooks to run that project's Project commands. It lapses when any file that chooses them changes.
+_Avoid_: allowlist, approval, allow

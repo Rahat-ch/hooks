@@ -4,6 +4,9 @@
  * fails, so the Host can't claim "done" while checks are red.
  *
  * - The command is configured, or detected (see ./detect) and announced.
+ *   A detected command, or one from the repo config, runs only in a trusted
+ *   project (`hardhooks trust`, ADR-0005); otherwise the stop goes ahead
+ *   unchecked and the user is told once per session.
  * - Command lines run through the platform shell, as npm runs scripts:
  *   `sh -c` on POSIX, `cmd.exe /d /s /c` on Windows. So `npm run lint && npm test`
  *   works everywhere, and `npm` resolves to npm.cmd on Windows.
@@ -31,7 +34,7 @@ const optionsSchema = s.object({
   command: s.optional(
     s.string({
       description:
-        "Command line to run when the Host stops, through the platform shell (sh -c on POSIX, cmd.exe /d /s /c on Windows). Omit to autodetect from package.json scripts (lint, typecheck, test), ruff, go vet or cargo check.",
+        "Command line to run when the Host stops, through the platform shell (sh -c on POSIX, cmd.exe /d /s /c on Windows). Omit to autodetect from package.json scripts (lint, typecheck, test), ruff, go vet or cargo check. From a repo config, and when autodetected, it runs only once the project is trusted (`hardhooks trust`).",
     }),
   ),
   timeoutSeconds: s.number({
@@ -56,7 +59,7 @@ const optionsSchema = s.object({
   editCommand: s.optional(
     s.string({
       description:
-        "Per-edit mode: a command line to run after each file edit, with {file} replaced by the edited file (appended when absent). Failures are fed back to the Host, never blocking.",
+        "Per-edit mode: a command line to run after each file edit, with {file} replaced by the edited file (appended when absent). Failures are fed back to the Host, never blocking. From a repo config, it runs only once the project is trusted (`hardhooks trust`).",
     }),
   ),
   editTimeoutSeconds: s.number({ integer: true, minimum: 1, description: "Seconds before an edit command is killed." }),

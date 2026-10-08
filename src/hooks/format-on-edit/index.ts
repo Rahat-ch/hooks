@@ -4,6 +4,13 @@
  * never blocks, adds no context; no formatter, a formatter error, a timeout
  * or a missing binary all leave the file as it is, silently (ADR-0004).
  *
+ * Trust (ADR-0005): a detected formatter runs only in a trusted project
+ * (`hardhooks trust`), even one from PATH. The project's config chose it, and
+ * that config can itself run code: prettier and dprint load plugins named in
+ * it, and `prettier.config.js` is a script. A `command` from the repo config
+ * needs trust too; one from the user config doesn't. Untrusted, the file is
+ * left as it is and the user is told once per session.
+ *
  * Detection: walk up from the file's directory to the repository root (the
  * nearest directory with `.git`), and in each directory check, in order, the
  * formatters that handle the file's extension: prettier, biome, ruff, black,
@@ -232,7 +239,8 @@ export const formatOnEdit = defineHook({
         description:
           'Format every edited file with this command instead of detecting a formatter, e.g. ["black", "--quiet", "{file}"]. ' +
           "Run without a shell from the project directory; `{file}` is replaced by the edited file's absolute path, which is appended when absent. " +
-          "On Windows name an executable (.exe), not a .cmd/.bat shim.",
+          "On Windows name an executable (.exe), not a .cmd/.bat shim. " +
+          "From a repo config it runs only once the project is trusted (`hardhooks trust`), as does every detected formatter.",
       }),
     ),
     timeoutMs: s.number({
