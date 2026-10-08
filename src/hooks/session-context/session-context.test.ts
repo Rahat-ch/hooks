@@ -3,10 +3,12 @@ import {
   claudeCode,
   commit,
   expectContext,
+  expectFixture,
   expectNoDecision,
   fakeEnvironment,
   git,
   initRepo,
+  loadFixtures,
   runEvent,
   writeProjectFile,
   writeRepoConfig,
@@ -137,6 +139,10 @@ describe("session-context", () => {
 
     const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);
     expect(context).toMatch(/missing\.md: \(could not read/);
+  });
+
+  it.each(loadFixtures(new URL("./fixtures", import.meta.url)))("fixture $file: $description", async (fixture) => {
+    expectFixture(await runEvent(JSON.stringify(fixture.payload), { event: fixture.event }), fixture);
   });
 
   it("still adds the date when git and extra commands cannot run at all", async () => {

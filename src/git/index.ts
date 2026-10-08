@@ -43,6 +43,8 @@ export async function gitStatus(runner: ProcessRunner, cwd: string, timeoutMs?: 
   let ahead = 0;
   let behind = 0;
   const records = out.split("\0");
+  // Real git always reports the branch headers; anything else isn't git status.
+  if (!records.some((record) => record.startsWith("# branch.oid "))) return undefined;
   for (let i = 0; i < records.length; i++) {
     const record = records[i]!;
     if (record.startsWith("# ")) {

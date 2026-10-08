@@ -1,0 +1,12 @@
+{
+  "description": "after compaction, today's date is added back as context",
+  "event": "SessionStart",
+  "payload": {
+    "session_id": "fixture-session",
+    "transcript_path": "/home/user/.claude/projects/demo/transcript.jsonl",
+    "cwd": "/home/user/demo",
+    "hook_event_name": "SessionStart",
+    "source": "compact"
+  },
+  "expect": { "decision": "none", "context": "^Today: \\d{4}-\\d{2}-\\d{2} \\(\\w+day\\)$" }
+}
