@@ -5,13 +5,13 @@
  * project's `.claude/settings.local.json`. Returns one warning per problem.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { ResolvedConfig } from "../config";
 import type { Environment } from "../environment";
 import type { EventName } from "../event";
 import type { Hook } from "../hooks/hook";
-import { projectRoot, settingsPath } from "../install";
-import { isHardhooksHandler, wantedEntries } from "../install/entries";
+import { localSettingsPath, projectRoot, settingsPath } from "../install";
+import { isHardhooksHandler, isPortableBundleRef, wantedEntries } from "../install/entries";
 import { toolKind } from "../hosts/claude-code";
 
 /** The plugin's name in `enabledPlugins` keys (`<plugin>@<marketplace>`), from `.claude-plugin/plugin.json`. */
@@ -94,9 +94,19 @@ const isAre = (names: readonly string[]) => `${names.join(", ")} ${names.length 
 
 export function installWarnings(env: Environment, hooks: readonly Hook<any>[], config: ResolvedConfig): string[] {
   const root = projectRoot(env);
-  const files = [settingsPath(env, "user"), settingsPath(env, "project"), join(root, ".claude", "settings.local.json")];
+  const shared = settingsPath(env, "project");
+  const files = [settingsPath(env, "user"), shared, localSettingsPath(env)];
   const installed = readInstalled(files);
   const warnings = [...installed.warnings];
+
+  // A committed absolute path fails on teammates' machines with a non-blocking error: their Guards silently do nothing.
+  const machineSpecific = installed.bundles.filter((b) => b.file === shared && !isPortableBundleRef(b.script));
+  for (const script of new Set(machineSpecific.map((b) => b.script))) {
+    const events = machineSpecific.filter((b) => b.script === script).map((b) => b.event);
+    warnings.push(
+      `${shared}: the hardhooks entries (${events.join(", ")}) run ${script}, a path on this machine only. Committed, they fail on teammates' machines and their Guards do nothing: re-run \`hardhooks init\` to move them to .claude/settings.local.json, or \`npm i -D hardhooks\` and \`npx hardhooks init\` to share them`,
+    );
+  }
 
   const seen = new Set<string>();
   for (const { file, script } of installed.bundles) {

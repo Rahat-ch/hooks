@@ -43,7 +43,7 @@ cd your-repo
 hardhooks init
 ```
 
-`init` prints the entries it will add to `.claude/settings.json` as a diff and asks before writing. It adds one entry per Event, and only for the Events your enabled Hooks need with their current options (for example, `check` adds SubagentStop only with `subagentStop`). It keeps every existing setting and hook, and you can run it again whenever you enable or disable a Hook or one of those options. `hardhooks test` warns when an Event your config needs isn't installed.
+`init` prints the entries it will add to your project settings as a diff and asks before writing. It adds one entry per Event, and only for the Events your enabled Hooks need with their current options (for example, `check` adds SubagentStop only with `subagentStop`). It keeps every existing setting and hook, and you can run it again whenever you enable or disable a Hook or one of those options. `hardhooks test` warns when an Event your config needs isn't installed.
 
 ```
 hardhooks init [--user] [--dry-run] [--yes]
@@ -53,14 +53,19 @@ hardhooks init [--user] [--dry-run] [--yes]
 - `--dry-run` prints the diff and writes nothing.
 - `--yes` writes without asking.
 
-The entries run `node <absolute path to the bundle> run <Event>`, never `npx`, because spawning through `npx` costs about 147 ms per Event against about 19 ms. With a global install, that path is specific to your machine. Re-run `init` if it moves, for example after switching Node versions under nvm. To commit `.claude/settings.json` for a team, install hardhooks into the project instead, so the entries point at `${CLAUDE_PROJECT_DIR}/node_modules/hardhooks/…`:
+The entries run `node <path to the bundle> run <Event>`, never `npx`, because spawning through `npx` costs about 147 ms per Event against about 19 ms. Where they go depends on where hardhooks is installed:
 
-```sh
-npm i -D hardhooks
-npx hardhooks init
-```
+- **Global install** (`npm i -g`): the path is absolute and exists only on your machine. On a teammate's machine `node` would fail to find it, the Host would carry on, and their Guards would silently do nothing. So `init` writes these entries to `.claude/settings.local.json`, which applies just to you in this project and isn't meant to be committed. Claude Code, Copilot CLI, Cursor, Devin CLI and Continue all read it. Claude Code git-ignores the file only when it creates it itself, so `init` warns you if git would commit it. Re-run `init` if the path moves, for example after switching Node versions under nvm.
+- **Project install** (`npm i -D`): the entries point at `${CLAUDE_PROJECT_DIR}/node_modules/hardhooks/…`, which works on every machine that has run `npm install`. They go in `.claude/settings.json`, so you can commit it and the whole team gets the same Guards:
 
-`npx` is fine for running `init` once. Only the hook entries themselves avoid it.
+  ```sh
+  npm i -D hardhooks
+  npx hardhooks init
+  ```
+
+  `npx` is fine for running `init` once. Only the hook entries themselves avoid it.
+
+`init` moves hardhooks' entries between the two files when you switch install methods, so the dispatcher never runs twice. If `.claude/settings.json` already runs the project's own copy, a global `init` refuses and tells you to use `npx hardhooks init` instead. `hardhooks test` warns if `.claude/settings.json` runs hardhooks by an absolute path, or if an installed path no longer exists.
 
 ### Claude Code plugin (Claude Code only)
 
@@ -366,9 +371,9 @@ Each entry is written to `<project>-<hash>/<YYYY-MM-DD>.jsonl`, and the files ar
 
 > **Documented, pending real-Host verification ([#15](https://github.com/Rahat-ch/hooks/issues/15)).** This table comes from each Host's documentation and source, not yet from captured sessions.
 
-Every Host below reads hardhooks' entries from `.claude/settings.json`, so one `init` covers all five. The `ask` column comes from `src/hosts/index.ts`.
+Every Host below reads hardhooks' entries from `.claude/settings.json` and `.claude/settings.local.json`, so one `init` covers all five. The `ask` column comes from `src/hosts/index.ts`.
 
-| Host | Reads `.claude/settings.json` | Honours `ask` | Documented gaps |
+| Host | Reads `.claude/settings(.local).json` | Honours `ask` | Documented gaps |
 | --- | --- | --- | --- |
 | Claude Code | yes | yes | none |
 | Copilot CLI | yes | yes | none known |
@@ -381,7 +386,7 @@ The Copilot cloud agent is detected too. It treats `ask` as `deny`, so the Prese
 ## Uninstall
 
 ```sh
-hardhooks uninstall            # project settings
+hardhooks uninstall            # project settings, shared and local
 hardhooks uninstall --user     # user settings
 npm rm -g hardhooks
 ```

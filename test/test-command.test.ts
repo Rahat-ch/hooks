@@ -3,7 +3,7 @@
  * case files run through the dispatcher against the resolved config, in a
  * temp project and home. Asserts only the printed report and the exit code.
  */
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -339,7 +339,7 @@ describe("hardhooks test", () => {
       const env = await installed();
       rmSync(fakeBundlePath(env));
       const result = await runTestCommand({ env, hooks: withExtras });
-      expect(result.stderr).toMatch(/warning: .*settings\.json: the hardhooks entries \([A-Za-z, ]*PreToolUse[A-Za-z, ]*\) run .*hardhooks\.mjs, which doesn't exist.*re-run `hardhooks init`/);
+      expect(result.stderr).toMatch(/warning: .*settings\.local\.json: the hardhooks entries \([A-Za-z, ]*PreToolUse[A-Za-z, ]*\) run .*hardhooks\.mjs, which doesn't exist.*re-run `hardhooks init`/);
       expect(result.stderr.match(/warning/g)).toHaveLength(1);
     });
 
@@ -352,6 +352,20 @@ describe("hardhooks test", () => {
       expect((await runTestCommand({ env })).stderr).toBe("");
       rmSync(bundlePath);
       expect((await runTestCommand({ env })).stderr).toMatch(/node_modules[\\/]hardhooks[\\/]dist[\\/]hardhooks\.mjs, which doesn't exist/);
+    });
+
+    it("warns when the shared project settings run hardhooks by a path that only exists on this machine", async () => {
+      const env = await installed();
+      // An older init (or a hand edit) put the global install's path in the committed file.
+      writeSettings(join(env.cwd, ".claude", "settings.json"), readFileSync(join(env.cwd, ".claude", "settings.local.json"), "utf8"));
+      rmSync(join(env.cwd, ".claude", "settings.local.json"));
+
+      const result = await runTestCommand({ env, hooks: withExtras });
+
+      expect(result.stderr).toMatch(
+        /warning: .*[\\/]\.claude[\\/]settings\.json: the hardhooks entries \(PreToolUse\) run .*hardhooks\.mjs, a path on this machine only.*teammates.*re-run `hardhooks init`/,
+      );
+      expect(result.stderr.match(/warning/g)).toHaveLength(1);
     });
 
     it("warns about an unreadable settings file", async () => {

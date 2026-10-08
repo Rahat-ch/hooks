@@ -8,12 +8,21 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { formatConfigError, loadConfig } from "../config/load";
 import type { Environment } from "../environment";
+import { isGitIgnored } from "../git";
 import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
 import { projectRoot as projectRootOf } from "../trust";
 import { untrustedNote } from "../trust/command";
 import { unifiedDiff } from "./diff";
-import { mergeEntries, wantedEntries, withoutHardhooks, type Entry, type JsonObject } from "./entries";
+import {
+  hardhooksHandlers,
+  isPortableBundleRef,
+  mergeEntries,
+  wantedEntries,
+  withoutHardhooks,
+  type Entry,
+  type JsonObject,
+} from "./entries";
 
 export type InstallScope = "project" | "user";
 /** `prompt` shows the diff and asks; `yes` writes without asking; `dry-run` only prints the diff. */
@@ -21,7 +30,10 @@ export type InstallMode = "prompt" | "yes" | "dry-run";
 
 export interface InstallRequest {
   env: Environment;
-  /** `project`: `.claude/settings.json` in the project. `user` (`--user`): the user-level one. */
+  /**
+   * `project`: the project's `.claude/settings.json`, or `.claude/settings.local.json`
+   * for a bundle outside the project (see `init`). `user` (`--user`): the user-level one.
+   */
   scope: InstallScope;
   mode: InstallMode;
   /** Absolute path of the running bundle (`dist/hardhooks.mjs`); the entries run it with `node`. */
@@ -52,9 +64,19 @@ export function settingsPath(env: Environment, scope: InstallScope): string {
 }
 
 /**
- * How a settings entry refers to the bundle. Project settings get committed,
- * so a bundle installed inside the project (`npm i -D hardhooks`) is referred
- * to as `${CLAUDE_PROJECT_DIR}/...`, which works on every teammate's machine.
+ * The project's per-machine settings file, `.claude/settings.local.json`:
+ * Claude Code applies it over `.claude/settings.json` and merges their hooks,
+ * and Copilot CLI, Cursor, Devin CLI and Continue read it too. It isn't meant
+ * to be committed (Claude Code git-ignores it when it creates it).
+ */
+export function localSettingsPath(env: Environment): string {
+  return join(projectRoot(env), ".claude", "settings.local.json");
+}
+
+/**
+ * How a settings entry refers to the bundle. In project scope, a bundle
+ * installed inside the project (`npm i -D hardhooks`) is referred to as
+ * `${CLAUDE_PROJECT_DIR}/...`, which works on every teammate's machine.
  * Anything else (a global install, or user settings) gets the absolute path
  * of the running bundle; re-run init after moving it (e.g. a new Node version
  * under nvm, whose global packages are per version).
@@ -118,47 +140,66 @@ function render(settings: JsonObject, file: SettingsFile): string {
 }
 
 interface Change {
-  next: JsonObject;
-  /** Printed before the diff. */
+  /** The new settings for each file, in the order of the paths given to `apply`. */
+  next: readonly JsonObject[];
+  /** Printed before the diffs. */
   summary: readonly string[];
   /** Printed instead when there is nothing to change. */
   unchanged: string;
 }
 
 /**
- * Show the change to the settings file at `path`, then write it unless this
- * is a dry run or the user declines. Resolves to the exit code.
+ * Show the change to the settings files at `paths` (one diff each), then
+ * write them unless this is a dry run or the user declines; one question
+ * covers every file. `plan` returns a string instead to refuse with that
+ * message, writing nothing. Resolves to the exit code.
  */
-async function apply(request: InstallRequest, path: string, change: (settings: JsonObject) => Change): Promise<number> {
+async function apply(
+  request: InstallRequest,
+  paths: readonly string[],
+  plan: (settings: readonly JsonObject[]) => Change | string,
+): Promise<number> {
   const { stdout } = request;
-  let file: SettingsFile;
+  let files: SettingsFile[];
   try {
-    file = readSettingsFile(path);
+    files = paths.map(readSettingsFile);
   } catch (error) {
     if (!(error instanceof SettingsError)) throw error;
     request.stderr(`hardhooks: ${error.message}\n`);
     return 1;
   }
-  const { next, summary, unchanged } = change(file.settings);
-  if (JSON.stringify(next) === JSON.stringify(file.settings)) {
-    stdout(`${unchanged}\n`);
+  const change = plan(files.map((file) => file.settings));
+  if (typeof change === "string") {
+    request.stderr(`hardhooks: ${change}\n`);
+    return 1;
+  }
+  const writes = files.flatMap((file, i) => {
+    const next = change.next[i]!;
+    return JSON.stringify(next) === JSON.stringify(file.settings) ? [] : [{ file, text: render(next, file) }];
+  });
+  if (writes.length === 0) {
+    stdout(`${change.unchanged}\n`);
     return 0;
   }
-  const text = render(next, file);
-  for (const line of summary) stdout(`${line}\n`);
-  stdout(unifiedDiff(file.text, text, file.exists ? file.path : "/dev/null", file.path));
+  for (const line of change.summary) stdout(`${line}\n`);
+  for (const { file, text } of writes) {
+    stdout(unifiedDiff(file.text, text, file.exists ? file.path : "/dev/null", file.path));
+  }
 
   if (request.mode === "dry-run") {
     stdout("Dry run: nothing written.\n");
     return 0;
   }
-  if (request.mode === "prompt" && !(await request.confirm(`Write ${file.path}?`))) {
+  const targets = writes.map(({ file }) => file.path).join(" and ");
+  if (request.mode === "prompt" && !(await request.confirm(`Write ${targets}?`))) {
     stdout("Nothing written.\n");
     return 1;
   }
-  mkdirSync(dirname(file.path), { recursive: true });
-  writeFileSync(file.path, text);
-  stdout(`Wrote ${file.path}\n`);
+  for (const { file, text } of writes) {
+    mkdirSync(dirname(file.path), { recursive: true });
+    writeFileSync(file.path, text);
+    stdout(`Wrote ${file.path}\n`);
+  }
   return 0;
 }
 
@@ -167,7 +208,18 @@ function describeEntry(entry: Entry): string {
   return `  ${entry.event}${tools}: ${entry.hooks.join(", ")}`;
 }
 
-/** `hardhooks init`: write one entry per Event the enabled Hooks need. Resolves to the exit code. */
+/**
+ * `hardhooks init`: write one entry per Event the enabled Hooks need. Resolves to the exit code.
+ *
+ * In project scope the entries go where they work for everyone who reads that
+ * file (ADR-0004: a Guard that silently does nothing is the worst outcome).
+ * A project-local install is referred to through `${CLAUDE_PROJECT_DIR}`, so
+ * its entries go in the shared `.claude/settings.json`. Any other bundle is an
+ * absolute path that only exists on this machine: committed, it would fail on
+ * a teammate's machine with a non-blocking error, leaving their Guards off. So
+ * those entries go in the per-machine `.claude/settings.local.json`. Either
+ * way, hardhooks entries are removed from the other file so nothing runs twice.
+ */
 export async function init(request: InstallRequest): Promise<number> {
   const { env, stderr } = request;
   const hooks = request.hooks ?? registeredHooks;
@@ -178,32 +230,87 @@ export async function init(request: InstallRequest): Promise<number> {
     return 1;
   }
   const entries = wantedEntries(hooks, loaded.config);
-  const path = settingsPath(env, request.scope);
   const bundle = bundleReference(env, request.scope, request.bundlePath);
   const summary =
     entries.length === 0
       ? ["No enabled Hooks need Host settings entries."]
       : ["hardhooks entries (Event [tools]: Hooks):", ...entries.map(describeEntry)];
-  if (entries.length > 0 && request.scope === "project" && bundle === request.bundlePath) {
-    summary.push(
-      `Note: ${bundle} is specific to this machine. To commit this file for a team, install hardhooks as a devDependency and re-run init.`,
-    );
+
+  let code: number;
+  if (request.scope === "user") {
+    const path = settingsPath(env, "user");
+    code = await apply(request, [path], ([settings]) => ({
+      next: [mergeEntries(settings!, entries, bundle)],
+      summary,
+      unchanged: `${path} is already up to date.`,
+    }));
+  } else if (isPortableBundleRef(bundle)) {
+    const [shared, local] = [settingsPath(env, "project"), localSettingsPath(env)];
+    code = await apply(request, [shared, local], ([sharedSettings, localSettings]) => ({
+      next: [mergeEntries(sharedSettings!, entries, bundle), withoutHardhooks(localSettings!)],
+      summary,
+      unchanged: `${shared} is already up to date.`,
+    }));
+  } else {
+    code = await initLocal(request, entries, bundle, summary);
   }
-  const code = await apply(request, path, (settings) => ({
-    next: mergeEntries(settings, entries, bundle),
-    summary,
-    unchanged: `${path} is already up to date.`,
-  }));
   for (const line of untrustedNote(env, hooks, loaded.config)) request.stdout(`${line}\n`);
+  return code;
+}
+
+/** Project-scope init for a bundle outside the project: entries in `.claude/settings.local.json`. */
+async function initLocal(request: InstallRequest, entries: readonly Entry[], bundle: string, summary: readonly string[]) {
+  const { env } = request;
+  const [shared, local] = [settingsPath(env, "project"), localSettingsPath(env)];
+  let refused = false;
+  const code = await apply(request, [shared, local], ([sharedSettings, localSettings]) => {
+    // Machine-specific entries an older init (or a teammate) left in the shared file move here.
+    const sharedNext = withoutHardhooks(sharedSettings!, (script) => !isPortableBundleRef(script));
+    const team = hardhooksHandlers(sharedNext)[0];
+    if (team !== undefined) {
+      refused = true;
+      return (
+        `${shared} already runs hardhooks from the project (${team.script}) for the whole team, ` +
+        `and adding this machine's copy (${bundle}) would run every Hook twice. ` +
+        "Update the shared entries with the project's own copy instead: `npm install`, then `npx hardhooks init`."
+      );
+    }
+    return {
+      next: [sharedNext, mergeEntries(localSettings!, entries, bundle)],
+      summary: [
+        ...summary,
+        ...(entries.length === 0
+          ? []
+          : [
+              `hardhooks isn't installed in this project, so these entries run ${bundle}, which only exists on this machine. ` +
+                `They go in ${local} (just you, in this project) rather than the shared .claude/settings.json, ` +
+                "where they would fail on teammates' machines and leave their Guards off. " +
+                "To give the whole team the Guards, run `npm i -D hardhooks`, then `npx hardhooks init`.",
+            ]),
+      ],
+      unchanged: `${local} is already up to date.`,
+    };
+  });
+  if (!refused && entries.length > 0) {
+    const ignored = await isGitIgnored(env.processRunner, projectRoot(env), local, { env: env.env });
+    if (ignored === false) {
+      request.stdout(
+        `Warning: git doesn't ignore ${local}. Add \`.claude/settings.local.json\` to .gitignore so this machine's path isn't committed.\n`,
+      );
+    }
+  }
   return code;
 }
 
 /** `hardhooks uninstall`: remove every entry hardhooks wrote, and nothing else. */
 export async function uninstall(request: InstallRequest): Promise<number> {
-  const path = settingsPath(request.env, request.scope);
-  return apply(request, path, (settings) => ({
-    next: withoutHardhooks(settings),
+  const { env } = request;
+  // In project scope, from the shared and the per-machine file alike: init may have used either.
+  const paths =
+    request.scope === "user" ? [settingsPath(env, "user")] : [settingsPath(env, "project"), localSettingsPath(env)];
+  return apply(request, paths, (settings) => ({
+    next: settings.map((s) => withoutHardhooks(s)),
     summary: [],
-    unchanged: `No hardhooks entries in ${path}.`,
+    unchanged: `No hardhooks entries in ${paths.join(" or ")}.`,
   }));
 }

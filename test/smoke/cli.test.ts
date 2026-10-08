@@ -61,7 +61,8 @@ describe("hardhooks CLI (bundled)", () => {
       mkdirSync(project);
       const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, USERPROFILE: root, XDG_CONFIG_HOME: join(root, "config"), APPDATA: join(root, "config") };
       delete env.CLAUDE_CONFIG_DIR;
-      const settingsFile = join(project, ".claude", "settings.json");
+      // This bundle lives outside the project, like a global install: its path is per-machine.
+      const settingsFile = join(project, ".claude", "settings.local.json");
 
       const declined = hardhooks(["init"], "n\n", [], { cwd: project, env });
       expect(declined.stdout).toMatch(/^\+.*"PreToolUse"/m);

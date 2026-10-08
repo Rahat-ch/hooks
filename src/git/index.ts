@@ -4,6 +4,7 @@
  * or git cannot run, so callers can degrade quietly.
  */
 import type { ProcessRunner } from "../environment";
+import type { GitOptions } from "./fingerprint";
 
 export interface GitStatus {
   /** Current branch name, or undefined when HEAD is detached. */
@@ -89,4 +90,30 @@ export async function recentCommitSubjects(
   const out = await runGit(runner, cwd, ["log", `--max-count=${count}`, "--format=%s"], timeoutMs);
   if (out === undefined) return undefined;
   return out.split("\n").filter((line) => line !== "");
+}
+
+/**
+ * Whether git would leave `path` out of a commit: ignored by `.gitignore`,
+ * `.git/info/exclude` or the global excludes file, and not tracked. Undefined
+ * outside a work tree or when git can't run.
+ */
+export async function isGitIgnored(
+  runner: ProcessRunner,
+  cwd: string,
+  path: string,
+  options: GitOptions,
+): Promise<boolean | undefined> {
+  try {
+    const result = await runner.run("git", ["--no-optional-locks", "check-ignore", "-q", "--", path], {
+      cwd,
+      env: options.env,
+      timeoutMs: options.timeoutMs ?? defaultTimeoutMs,
+    });
+    // check-ignore: 0 ignored, 1 not ignored (tracked files never are), 128 not a repo or other error.
+    if (result.exitCode === 0) return true;
+    if (result.exitCode === 1) return false;
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }

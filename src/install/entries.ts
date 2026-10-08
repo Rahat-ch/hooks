@@ -7,6 +7,7 @@
  * and Continue): `hooks.<Event>` is a list of matcher groups, each
  * `{ matcher?, hooks: [handler, ...] }`. https://code.claude.com/docs/en/hooks
  */
+import { posix, win32 } from "node:path";
 import { hookSettings, type ResolvedConfig } from "../config";
 import type { EventName, ToolKind } from "../event";
 import { activeEvents, type Hook } from "../hooks/hook";
@@ -105,12 +106,33 @@ export function isHardhooksHandler(value: unknown): boolean {
 }
 
 /**
- * Settings with every hardhooks handler removed, and matcher groups, Event
- * lists and the `hooks` object removed if that left them empty. Everything
- * else is kept as is. Returns the same object when there was nothing to remove.
+ * Whether a bundle reference works on every machine with the project:
+ * `${CLAUDE_PROJECT_DIR}/...`, not an absolute path (a global install, or a
+ * clone's own location), which exists only on the machine that wrote it.
  */
-export function withoutHardhooks(settings: JsonObject): JsonObject {
-  return mergeEntries(settings, [], "");
+export function isPortableBundleRef(script: string): boolean {
+  return !posix.isAbsolute(script) && !win32.isAbsolute(script);
+}
+
+/** The bundle each hardhooks handler in these settings runs, with its Event. */
+export function hardhooksHandlers(settings: JsonObject): { event: string; script: string }[] {
+  if (!isObject(settings.hooks)) return [];
+  return Object.entries(settings.hooks).flatMap(([event, groups]) =>
+    (Array.isArray(groups) ? groups : []).flatMap((g) =>
+      isObject(g) && Array.isArray(g.hooks)
+        ? g.hooks.filter(isHardhooksHandler).map((h) => ({ event, script: (h as { args: string[] }).args[0]! }))
+        : [],
+    ),
+  );
+}
+
+/**
+ * Settings with every hardhooks handler (or only those whose bundle `which`
+ * picks) removed, and matcher groups, Event lists and the `hooks` object
+ * removed if that left them empty. Everything else is kept as is.
+ */
+export function withoutHardhooks(settings: JsonObject, which: (script: string) => boolean = () => true): JsonObject {
+  return mergeEntries(settings, [], "", which);
 }
 
 /**
@@ -118,7 +140,13 @@ export function withoutHardhooks(settings: JsonObject): JsonObject {
  * hardhooks group is replaced in place (so re-running init produces no diff),
  * new Events are appended, and hardhooks handlers for other Events removed.
  */
-export function mergeEntries(settings: JsonObject, entries: readonly Entry[], bundleRef: string): JsonObject {
+export function mergeEntries(
+  settings: JsonObject,
+  entries: readonly Entry[],
+  bundleRef: string,
+  which: (script: string) => boolean = () => true,
+): JsonObject {
+  const isOurs = (h: unknown) => isHardhooksHandler(h) && which((h as { args: string[] }).args[0]!);
   const before = isObject(settings.hooks) ? settings.hooks : undefined;
   const hooks: JsonObject = { ...before };
   const wanted = new Map(entries.map((entry) => [entry.event, entry]));
@@ -130,11 +158,11 @@ export function mergeEntries(settings: JsonObject, entries: readonly Entry[], bu
     let placed = entry === undefined;
     const next: Json[] = [];
     for (const g of groups) {
-      if (!isObject(g) || !Array.isArray(g.hooks) || !g.hooks.some(isHardhooksHandler)) {
+      if (!isObject(g) || !Array.isArray(g.hooks) || !g.hooks.some(isOurs)) {
         next.push(g);
         continue;
       }
-      const others = g.hooks.filter((h) => !isHardhooksHandler(h));
+      const others = g.hooks.filter((h) => !isOurs(h));
       if (others.length > 0) next.push({ ...g, hooks: others });
       if (!placed) {
         next.push(group(entry!, bundleRef));

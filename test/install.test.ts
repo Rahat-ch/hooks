@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { EventName, ToolKind } from "../src/event";
@@ -6,6 +6,10 @@ import { defineHook, type Hook } from "../src/hooks/hook";
 import {
   fakeBundlePath,
   fakeEnvironment,
+  hermeticGitEnvironment,
+  initRealGitRepo,
+  localSettingsPath,
+  projectBundlePath,
   projectSettingsPath,
   readSettings,
   runInit,
@@ -34,6 +38,11 @@ function testHook(
   });
 }
 
+/** How project settings refer to a project-local install's bundle. */
+const projectBundle = "${CLAUDE_PROJECT_DIR}/node_modules/hardhooks/dist/hardhooks.mjs";
+
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const shellGuard = testHook("shell-guard", ["PreToolUse"], { tools: ["shell"], failMode: "closed" });
 
 /** The entry init writes for one Event: `node <bundle> run <Event>` in exec form. */
@@ -47,15 +56,92 @@ function entry(bundle: string, event: string, matcher?: string) {
 describe("hardhooks init", () => {
   it("creates the project settings file with a PreToolUse entry for the enabled Guards", async () => {
     const env = fakeEnvironment();
-    const result = await runInit({ env, mode: "yes", hooks: [shellGuard] });
+    const result = await runInit({ env, mode: "yes", bundlePath: projectBundlePath(env), hooks: [shellGuard] });
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.prompts).toEqual([]);
     expect(readSettings(projectSettingsPath(env))).toEqual({
-      hooks: { PreToolUse: [entry(fakeBundlePath(env), "PreToolUse", "Bash")] },
+      hooks: { PreToolUse: [entry(projectBundle, "PreToolUse", "Bash")] },
     });
-    // A global install's path is machine-specific, which matters for a committed project file.
-    expect(result.stdout).toMatch(/devDependency/);
+  });
+
+  describe("a bundle outside the project (global install)", () => {
+    it("goes to .claude/settings.local.json, never the shared settings a team commits, and says why", async () => {
+      const env = fakeEnvironment();
+
+      const result = await runInit({ env, mode: "yes", hooks: [shellGuard] });
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(readSettings(localSettingsPath(env))).toEqual({
+        hooks: { PreToolUse: [entry(fakeBundlePath(env), "PreToolUse", "Bash")] },
+      });
+      expect(readSettings(projectSettingsPath(env))).toBeUndefined();
+      expect(result.stdout).toContain(`Wrote ${localSettingsPath(env)}`);
+      expect(result.stdout).toMatch(/only exists on this machine[\s\S]*npm i -D hardhooks[\s\S]*npx hardhooks init/);
+    });
+
+    it("moves machine-specific entries out of the shared settings, keeping everything else there", async () => {
+      const env = fakeEnvironment();
+      const userGroup = { matcher: "Bash", hooks: [{ type: "command", command: "./audit.sh" }] };
+      const legacy = "/Users/someone/.nvm/versions/node/v22/lib/node_modules/hardhooks/dist/hardhooks.mjs";
+      writeSettings(projectSettingsPath(env), {
+        model: "opus",
+        hooks: { PreToolUse: [userGroup, entry(legacy, "PreToolUse", "Bash")], Stop: [entry(legacy, "Stop")] },
+      });
+
+      const declined = await runInit({ env, answer: false, hooks: [shellGuard] });
+      expect(declined.prompts).toEqual([`Write ${projectSettingsPath(env)} and ${localSettingsPath(env)}?`]);
+      expect(declined.stdout).toMatch(new RegExp(`^--- ${escape(projectSettingsPath(env))}$[\\s\\S]*^-\\s+"Stop": \\[$`, "m"));
+      expect(declined.stdout).toMatch(new RegExp(`^\\+\\+\\+ ${escape(localSettingsPath(env))}$`, "m"));
+
+      await runInit({ env, mode: "yes", hooks: [shellGuard] });
+
+      expect(readSettings(projectSettingsPath(env))).toEqual({ model: "opus", hooks: { PreToolUse: [userGroup] } });
+      expect(readSettings(localSettingsPath(env))).toEqual({
+        hooks: { PreToolUse: [entry(fakeBundlePath(env), "PreToolUse", "Bash")] },
+      });
+      expect((await runInit({ env, hooks: [shellGuard] })).stdout).toMatch(/up to date/);
+    });
+
+    it("refuses to add a second copy beside shared entries that run the project's own install", async () => {
+      const env = fakeEnvironment();
+      const shared = { hooks: { PreToolUse: [entry(projectBundle, "PreToolUse", "Bash")] } };
+      writeSettings(projectSettingsPath(env), shared);
+
+      const result = await runInit({ env, mode: "yes", hooks: [shellGuard] });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toMatch(/\$\{CLAUDE_PROJECT_DIR\}[\s\S]*npm install[\s\S]*npx hardhooks init/);
+      expect(readSettings(projectSettingsPath(env))).toEqual(shared);
+      expect(readSettings(localSettingsPath(env))).toBeUndefined();
+    });
+
+    it("warns when git would commit .claude/settings.local.json", async () => {
+      const env = hermeticGitEnvironment();
+      const repo = initRealGitRepo(env);
+
+      const exposed = await runInit({ env, mode: "yes", hooks: [shellGuard] });
+      expect(exposed.stdout).toMatch(/git doesn't ignore .*settings\.local\.json/);
+
+      writeFileSync(join(repo.dir, ".gitignore"), ".claude/settings.local.json\n");
+      writeSettings(localSettingsPath(env), {});
+      const ignored = await runInit({ env, mode: "yes", hooks: [shellGuard] });
+      expect(ignored.stdout).not.toMatch(/doesn't ignore/);
+    });
+  });
+
+  it("with a project-local install, removes hardhooks entries from settings.local.json so nothing runs twice", async () => {
+    const env = fakeEnvironment();
+    await runInit({ env, mode: "yes", hooks: [shellGuard] });
+    expect(readSettings(localSettingsPath(env)).hooks.PreToolUse).toHaveLength(1);
+
+    const result = await runInit({ env, mode: "yes", bundlePath: projectBundlePath(env), hooks: [shellGuard] });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(readSettings(localSettingsPath(env))).toEqual({});
+    expect(readSettings(projectSettingsPath(env))).toEqual({
+      hooks: { PreToolUse: [entry(projectBundle, "PreToolUse", "Bash")] },
+    });
   });
 
   it("writes one entry per Event, matching the union of the tools its enabled Hooks handle", async () => {
@@ -71,7 +157,7 @@ describe("hardhooks init", () => {
     await runInit({ env, mode: "yes", hooks });
 
     const bundle = fakeBundlePath(env);
-    expect(readSettings(projectSettingsPath(env))).toEqual({
+    expect(readSettings(localSettingsPath(env))).toEqual({
       hooks: {
         SessionStart: [entry(bundle, "SessionStart")],
         PreToolUse: [entry(bundle, "PreToolUse", "Bash|Read|Edit|MultiEdit|NotebookEdit")],
@@ -86,7 +172,7 @@ describe("hardhooks init", () => {
     await runInit({ env, mode: "yes", hooks: [shellGuard, testHook("auditor", ["PreToolUse", "PostToolUse"])] });
 
     const bundle = fakeBundlePath(env);
-    expect(readSettings(projectSettingsPath(env))).toEqual({
+    expect(readSettings(localSettingsPath(env))).toEqual({
       hooks: { PreToolUse: [entry(bundle, "PreToolUse")], PostToolUse: [entry(bundle, "PostToolUse")] },
     });
   });
@@ -100,7 +186,7 @@ describe("hardhooks init", () => {
 
     expect(plain.stdout).toMatch(/^ {2}Stop: check$/m);
     expect(plain.stdout).not.toMatch(/SubagentStop|PostToolUse/);
-    expect(Object.keys(readSettings(projectSettingsPath(env)).hooks)).toEqual(["SessionStart", "PreToolUse", "Stop"]);
+    expect(Object.keys(readSettings(localSettingsPath(env)).hooks)).toEqual(["SessionStart", "PreToolUse", "Stop"]);
 
     writeRepoConfig(env, {
       hooks: { check: { enabled: true, subagentStop: true, editCommand: "eslint" }, "format-on-edit": { enabled: false } },
@@ -109,7 +195,7 @@ describe("hardhooks init", () => {
 
     expect(optedIn.stdout).toMatch(/^ {2}PostToolUse \[Edit\|MultiEdit\|NotebookEdit\|Write\]: check$/m);
     expect(optedIn.stdout).toMatch(/^ {2}SubagentStop: check$/m);
-    expect(Object.keys(readSettings(projectSettingsPath(env)).hooks)).toEqual([
+    expect(Object.keys(readSettings(localSettingsPath(env)).hooks)).toEqual([
       "SessionStart",
       "PreToolUse",
       "Stop",
@@ -122,7 +208,7 @@ describe("hardhooks init", () => {
     const env = fakeEnvironment();
     const userGroup = { matcher: "Bash", hooks: [{ type: "command", command: "./audit.sh" }] };
     const userStop = { hooks: [{ type: "command", command: "say done", timeout: 5 }] };
-    writeSettings(projectSettingsPath(env), {
+    writeSettings(localSettingsPath(env), {
       permissions: { allow: ["Bash(npm test)"] },
       hooks: { PreToolUse: [userGroup], Stop: [userStop] },
       model: "opus",
@@ -130,7 +216,7 @@ describe("hardhooks init", () => {
 
     expect((await runInit({ env, mode: "yes", hooks: [shellGuard] })).exitCode).toBe(0);
 
-    expect(readSettings(projectSettingsPath(env))).toEqual({
+    expect(readSettings(localSettingsPath(env))).toEqual({
       permissions: { allow: ["Bash(npm test)"] },
       hooks: { PreToolUse: [userGroup, entry(fakeBundlePath(env), "PreToolUse", "Bash")], Stop: [userStop] },
       model: "opus",
@@ -139,33 +225,33 @@ describe("hardhooks init", () => {
 
   it("shows a diff of the settings file and asks before writing", async () => {
     const env = fakeEnvironment();
-    writeSettings(projectSettingsPath(env), { model: "opus" });
+    writeSettings(localSettingsPath(env), { model: "opus" });
 
     const declined = await runInit({ env, answer: false, hooks: [shellGuard] });
     expect(declined.prompts).toHaveLength(1);
-    expect(declined.stdout).toContain(projectSettingsPath(env));
+    expect(declined.stdout).toContain(localSettingsPath(env));
     expect(declined.stdout).toMatch(/^\+\s+"PreToolUse": \[$/m);
     expect(declined.stdout).toMatch(/^-\s+"model": "opus"$/m);
     expect(declined.stdout).toMatch(/^\+\s+"model": "opus",$/m);
     expect(declined.exitCode).toBe(1);
-    expect(readSettings(projectSettingsPath(env))).toEqual({ model: "opus" });
+    expect(readSettings(localSettingsPath(env))).toEqual({ model: "opus" });
 
     const accepted = await runInit({ env, answer: true, hooks: [shellGuard] });
     expect(accepted.prompts).toHaveLength(1);
     expect(accepted.exitCode).toBe(0);
-    expect(readSettings(projectSettingsPath(env)).hooks.PreToolUse).toHaveLength(1);
+    expect(readSettings(localSettingsPath(env)).hooks.PreToolUse).toHaveLength(1);
   });
 
   it("is idempotent: re-running with no changes shows no diff and asks nothing", async () => {
     const env = fakeEnvironment();
     const userGroup = { matcher: "Edit", hooks: [{ type: "command", command: "./lint.sh" }] };
-    writeSettings(projectSettingsPath(env), { hooks: { PreToolUse: [] } });
+    writeSettings(localSettingsPath(env), { hooks: { PreToolUse: [] } });
     await runInit({ env, mode: "yes", hooks: [shellGuard] });
     // The user adds their own group after ours; ours must stay where it is.
-    const settings = readSettings(projectSettingsPath(env));
+    const settings = readSettings(localSettingsPath(env));
     settings.hooks.PreToolUse.push(userGroup);
-    writeSettings(projectSettingsPath(env), settings);
-    const before = readFileSync(projectSettingsPath(env), "utf8");
+    writeSettings(localSettingsPath(env), settings);
+    const before = readFileSync(localSettingsPath(env), "utf8");
 
     const again = await runInit({ env, hooks: [shellGuard] });
 
@@ -173,7 +259,7 @@ describe("hardhooks init", () => {
     expect(again.prompts).toEqual([]);
     expect(again.stdout).toMatch(/up to date/i);
     expect(again.stdout).not.toMatch(/^[+-]/m);
-    expect(readFileSync(projectSettingsPath(env), "utf8")).toBe(before);
+    expect(readFileSync(localSettingsPath(env), "utf8")).toBe(before);
   });
 
   it("after enabling a Hook on a new Event, re-running adds exactly that Event's entry", async () => {
@@ -181,20 +267,20 @@ describe("hardhooks init", () => {
     const checker = testHook("checker", ["Stop"], { enabled: false });
     const hooks = [shellGuard, checker];
     await runInit({ env, mode: "yes", hooks });
-    const before = readSettings(projectSettingsPath(env));
+    const before = readSettings(localSettingsPath(env));
 
     writeRepoConfig(env, { hooks: { checker: { enabled: true } } });
     const result = await runInit({ env, mode: "yes", hooks });
 
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(readSettings(projectSettingsPath(env))).toEqual({
+    expect(readSettings(localSettingsPath(env))).toEqual({
       hooks: { ...before.hooks, Stop: [entry(fakeBundlePath(env), "Stop")] },
     });
 
     // And disabling it again removes exactly that entry.
     writeRepoConfig(env, { hooks: { checker: { enabled: false } } });
     await runInit({ env, mode: "yes", hooks });
-    expect(readSettings(projectSettingsPath(env))).toEqual(before);
+    expect(readSettings(localSettingsPath(env))).toEqual(before);
   });
 
   it("--dry-run prints the diff and writes nothing", async () => {
@@ -218,8 +304,8 @@ describe("hardhooks init", () => {
 
     await runInit({ env, mode: "yes", hooks: [shellGuard] });
 
-    expect(readSettings(projectSettingsPath(base)).hooks.PreToolUse).toHaveLength(1);
-    expect(readSettings(projectSettingsPath(env))).toBeUndefined();
+    expect(readSettings(localSettingsPath(base)).hooks.PreToolUse).toHaveLength(1);
+    expect(readSettings(localSettingsPath(env))).toBeUndefined();
   });
 
   it("--user writes the user-level settings file and leaves the project alone", async () => {
@@ -251,18 +337,18 @@ describe("hardhooks init", () => {
     const nodeDir = String.raw`C:\Program Files\nodejs\node_modules\hardhooks\dist\hardhooks.mjs`;
 
     await runInit({ env, mode: "yes", bundlePath: npmGlobal, hooks: [shellGuard] });
-    expect(readSettings(projectSettingsPath(env))).toEqual({
+    expect(readSettings(localSettingsPath(env))).toEqual({
       hooks: { PreToolUse: [entry(npmGlobal, "PreToolUse", "Bash")] },
     });
 
     // Reinstalled elsewhere: re-running init moves the entry rather than adding another.
     await runInit({ env, mode: "yes", bundlePath: nodeDir, hooks: [shellGuard] });
-    expect(readSettings(projectSettingsPath(env))).toEqual({
+    expect(readSettings(localSettingsPath(env))).toEqual({
       hooks: { PreToolUse: [entry(nodeDir, "PreToolUse", "Bash")] },
     });
 
     await runUninstall({ env, mode: "yes" });
-    expect(readSettings(projectSettingsPath(env))).toEqual({});
+    expect(readSettings(localSettingsPath(env))).toEqual({});
   });
 
   it("refers to a project-local install through ${CLAUDE_PROJECT_DIR}, so the committed file works for the whole team", async () => {
@@ -351,27 +437,39 @@ describe("hardhooks uninstall", () => {
 
   it("removes only hardhooks entries, leaving everything else as it was", async () => {
     const env = fakeEnvironment();
-    writeSettings(projectSettingsPath(env), original);
+    writeSettings(localSettingsPath(env), original);
     await runInit({ env, mode: "yes", hooks });
-    expect(readSettings(projectSettingsPath(env))).not.toEqual(original);
+    expect(readSettings(localSettingsPath(env))).not.toEqual(original);
+
+    const result = await runUninstall({ env, mode: "yes" });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(readSettings(localSettingsPath(env))).toEqual(original);
+  });
+
+  it("removes hardhooks entries from both the shared and the per-machine project settings", async () => {
+    const env = fakeEnvironment();
+    writeSettings(projectSettingsPath(env), { ...original, hooks: { ...original.hooks, Stop: [...original.hooks.Stop, entry(projectBundle, "Stop")] } });
+    writeSettings(localSettingsPath(env), { hooks: { PreToolUse: [entry(fakeBundlePath(env), "PreToolUse", "Bash")] } });
 
     const result = await runUninstall({ env, mode: "yes" });
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(readSettings(projectSettingsPath(env))).toEqual(original);
+    expect(readSettings(localSettingsPath(env))).toEqual({});
   });
 
   it("keeps a handler the user added to a hardhooks matcher group", async () => {
     const env = fakeEnvironment();
     await runInit({ env, mode: "yes", hooks: [shellGuard] });
-    const settings = readSettings(projectSettingsPath(env));
+    const settings = readSettings(localSettingsPath(env));
     const mine = { type: "command", command: "./mine.sh" };
     settings.hooks.PreToolUse[0].hooks.push(mine);
-    writeSettings(projectSettingsPath(env), settings);
+    writeSettings(localSettingsPath(env), settings);
 
     await runUninstall({ env, mode: "yes" });
 
-    expect(readSettings(projectSettingsPath(env))).toEqual({
+    expect(readSettings(localSettingsPath(env))).toEqual({
       hooks: { PreToolUse: [{ matcher: "Bash", hooks: [mine] }] },
     });
   });
@@ -388,7 +486,7 @@ describe("hardhooks uninstall", () => {
 
     await runUninstall({ env, user: true });
     expect(readSettings(userSettingsPath(env))).toEqual({});
-    expect(readSettings(projectSettingsPath(env)).hooks.PreToolUse).toHaveLength(1);
+    expect(readSettings(localSettingsPath(env)).hooks.PreToolUse).toHaveLength(1);
   });
 
   it("says so and changes nothing when hardhooks isn't installed", async () => {

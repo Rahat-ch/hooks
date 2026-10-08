@@ -74,6 +74,20 @@ export function projectSettingsPath(env: Environment): string {
   return join(env.cwd, ".claude", "settings.json");
 }
 
+/**
+ * The per-machine project settings file (`.claude/settings.local.json`), where
+ * init puts entries that run a bundle outside the project (such as `runInit`'s
+ * default, global-install-like bundle).
+ */
+export function localSettingsPath(env: Environment): string {
+  return join(env.cwd, ".claude", "settings.local.json");
+}
+
+/** Where a project-local install (`npm i -D hardhooks`) keeps the bundle. */
+export function projectBundlePath(env: Environment): string {
+  return join(env.cwd, "node_modules", "hardhooks", "dist", "hardhooks.mjs");
+}
+
 /** The user-level settings file `init --user` writes. */
 export function userSettingsPath(env: Environment): string {
   return join(env.home, ".claude", "settings.json");
