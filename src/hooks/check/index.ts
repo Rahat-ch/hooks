@@ -3,11 +3,14 @@
  * command and block the stop with the failure output if it fails, so the Host
  * can't claim "done" while checks are red.
  */
+import { join } from "node:path";
 import { block, message } from "../../decision";
+import { workingTreeFingerprint } from "../../git/fingerprint";
 import * as s from "../../config/schema";
 import { defineHook } from "../hook";
 import { detectCommand } from "./detect";
 import { truncateOutput } from "./output";
+import { CheckState } from "./state";
 
 const optionsSchema = s.object({
   command: s.optional(
@@ -22,11 +25,17 @@ const optionsSchema = s.object({
     maximum: 9000,
     description: "Most bytes of failure output to put in the block reason, which enters the Host's context.",
   }),
+  maxBlocks: s.number({
+    integer: true,
+    minimum: 1,
+    description:
+      "Consecutive Stop blocks before check gives up and lets the Host stop. Keep it below Claude Code's own cap (8).",
+  }),
 });
 
 type CheckOptions = s.Infer<typeof optionsSchema>;
 
-const presetOptions: CheckOptions = { outputBytes: 4000 };
+const presetOptions: CheckOptions = { outputBytes: 4000, maxBlocks: 3 };
 
 export const check = defineHook<CheckOptions>({
   name: "check",
@@ -44,8 +53,29 @@ export const check = defineHook<CheckOptions>({
     if (command === undefined) return undefined;
     const chosen = detected ? `\`${command}\` (detected from ${detected.source})` : `\`${command}\``;
 
+    const state = new CheckState(join(env.stateDir, "check"));
+    const session = event.sessionId ?? "";
+    const fingerprint = await workingTreeFingerprint(env.processRunner, event.cwd, { env: env.env });
+    if (fingerprint !== undefined && state.lastPass(event.cwd, command) === fingerprint) {
+      state.setConsecutiveBlocks(session, event.name, 0);
+      return undefined;
+    }
+    // A fresh stop (the Host isn't continuing because of a stop hook) starts a
+    // new run of blocks. Hosts that don't send the signal keep counting.
+    const blocks = event.stopHookActive === false ? 0 : state.consecutiveBlocks(session, event.name);
+    if (blocks >= options.maxBlocks) {
+      state.setConsecutiveBlocks(session, event.name, 0);
+      return message(`${chosen} was still failing after ${blocks} attempts, so check let the Host stop. Run it to see the failures.`);
+    }
+
     const result = await env.processRunner.run(command, [], { cwd: event.cwd, env: env.env, shell: true });
-    if (result.exitCode === 0) return detected ? message(`ran ${chosen}: passed.`) : undefined;
+    if (result.exitCode === 0) {
+      state.setConsecutiveBlocks(session, event.name, 0);
+      state.recordPass(event.cwd, command, fingerprint);
+      return detected ? message(`ran ${chosen}: passed.`) : undefined;
+    }
+    state.setConsecutiveBlocks(session, event.name, blocks + 1);
+    state.recordPass(event.cwd, command, undefined);
     const output = truncateOutput(`${result.stdout}\n${result.stderr}`, options.outputBytes);
     return block(`${chosen} failed (exit ${result.exitCode}). Fix the problems before finishing.\n\n${output}`);
   },

@@ -37,6 +37,11 @@
               "type": "integer",
               "minimum": 200,
               "maximum": 9000
+            },
+            "maxBlocks": {
+              "description": "Consecutive Stop blocks before check gives up and lets the Host stop. Keep it below Claude Code's own cap (8).",
+              "type": "integer",
+              "minimum": 1
             }
           },
           "additionalProperties": false
