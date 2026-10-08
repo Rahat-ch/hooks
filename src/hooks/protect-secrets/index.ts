@@ -5,7 +5,9 @@
 import { block } from "../../decision";
 import * as s from "../../config/schema";
 import { defaultIgnoreFiles, resolvePath, secretsMatcher, type SecretMatch } from "../../secrets";
+import { analyzeShell } from "../../shell";
 import { defineHook } from "../hook";
+import { shellFinding } from "./shell";
 
 export interface ProtectSecretsOptions {
   protect: string[];
@@ -52,6 +54,18 @@ export const protectSecrets = defineHook<ProtectSecretsOptions>({
     const tool = event.tool;
     if (tool === undefined) return undefined;
     const matcher = secretsMatcher({ projectDir: event.cwd, home: env.home, ...options });
+    if (tool.kind === "shell") {
+      if (tool.command === undefined) return undefined;
+      const analysis = analyzeShell(tool.command, { cwd: event.cwd, home: env.home });
+      if (!analysis.ok) {
+        return block(
+          `This command couldn't be analysed (${analysis.error}), so protect-secrets blocked it to be safe. ` +
+            "Fix the syntax or split it into simpler commands.",
+        );
+      }
+      const finding = shellFinding(analysis.commands, event.cwd, matcher);
+      return finding ? block(reasonFor(finding.operand, finding.match)) : undefined;
+    }
     if (tool.filePath !== undefined) {
       const match = matcher.match(tool.filePath, event.cwd);
       if (match) return block(reasonFor(tool.filePath, match));

@@ -16,6 +16,7 @@ import { compileRules, lastMatch, type Rule } from "./patterns";
 import { canonicalPath, resolvePath } from "./paths";
 
 export { canonicalPath, resolvePath } from "./paths";
+export { hasGlob, shellSegmentRegex } from "./patterns";
 
 /**
  * The built-in protected patterns, in gitignore syntax. Unlike ignore files,
