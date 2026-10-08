@@ -9,14 +9,26 @@ import type { Environment } from "../../environment";
 import type { HookEvent } from "../../event";
 import * as s from "../../config/schema";
 import { defineHook } from "../hook";
-import { desktopCommand, type Notification } from "./desktop";
+import { desktopCommand, type Command, type Notification } from "./desktop";
+import { webhookCommand } from "./webhook";
 
 const optionsSchema = s.object({
   thresholdSeconds: s.number({
     minimum: 0,
     description: "Notify at Stop only when the turn ran longer than this many seconds.",
   }),
+  webhook: s.optional(
+    s.object(
+      {
+        url: s.string({ description: "The ntfy topic URL (e.g. https://ntfy.sh/my-topic) or Slack incoming-webhook URL." }),
+        kind: s.oneOf(["ntfy", "slack"]),
+      },
+      { description: "Also post each notification to this webhook (opt-in)." },
+    ),
+  ),
 });
+
+type Options = s.Infer<typeof optionsSchema>;
 
 /** Where the start of the session's current turn is kept. */
 function turnFile(env: Environment, event: HookEvent): string {
@@ -48,16 +60,21 @@ function osc9(notification: Notification): string {
   return `\u001b]9;${text}\u0007`;
 }
 
+function start({ command, args, env }: Command, environment: Environment): void {
+  environment.processRunner.spawnDetached(command, args, env ? { env } : {});
+}
+
 /**
- * Start a native notification in a detached process. Without one, fall back
- * to OSC 9: hooks have no controlling terminal (`/dev/tty` fails), so the Host
- * writes the sequence to its own terminal from our `terminalSequence` output.
+ * Start a native notification, and the webhook if configured, each in a
+ * detached process. Without a native notifier, fall back to OSC 9: hooks have
+ * no controlling terminal (`/dev/tty` fails), so the Host writes the sequence
+ * to its own terminal from our `terminalSequence` output.
  */
-function deliver(notification: Notification, env: Environment): Decision | undefined {
+function deliver(notification: Notification, options: Options, env: Environment): Decision | undefined {
   const native = desktopCommand(notification, env);
-  if (native === undefined) return terminalSequence(osc9(notification));
-  env.processRunner.spawnDetached(native.command, native.args, native.env ? { env: native.env } : {});
-  return undefined;
+  if (native) start(native, env);
+  if (options.webhook) start(webhookCommand(notification, options.webhook), env);
+  return native ? undefined : terminalSequence(osc9(notification));
 }
 
 export const notify = defineHook({
@@ -79,8 +96,8 @@ export const notify = defineHook({
     if (event.name === "Stop") {
       const seconds = turnSeconds(event, env);
       if (seconds === undefined || seconds <= options.thresholdSeconds) return undefined;
-      return deliver({ title, body: `Finished after ${Math.round(seconds)}s` }, env);
+      return deliver({ title, body: `Finished after ${Math.round(seconds)}s` }, options, env);
     }
-    return deliver({ title, body: event.message ?? "Needs your attention" }, env);
+    return deliver({ title, body: event.message ?? "Needs your attention" }, options, env);
   },
 });

@@ -140,6 +140,46 @@ describe("notify", () => {
     expect(observe(result).terminalSequence).toBe(`\u001b]9;${basename(env.cwd)}: done]52;c;aGk= now\u0007`);
   });
 
+  it("calls no webhook unless one is configured", async () => {
+    const env = envWith("linux", ["notify-send", "curl"]);
+    await runEvent(claudeCode.notification("Claude needs your permission"), { env, config: notifyConfig() });
+    expect(spawns(env).map((spawn) => spawn.command)).toEqual(["notify-send"]);
+  });
+
+  /** The body a detached curl would POST, and where to. */
+  function webhookPost(env: FakeEnvironment) {
+    const posts = spawns(env).filter((spawn) => spawn.command === "curl");
+    expect(posts).toHaveLength(1);
+    const { args } = posts[0]!;
+    return { url: args[args.indexOf("--url") + 1], body: args[args.indexOf("--data-raw") + 1]! };
+  }
+
+  it("posts the notification to a configured ntfy topic, as well as the desktop notification", async () => {
+    const env = envWith("linux", ["notify-send"]);
+    writeRepoConfig(env, {
+      hooks: { notify: { enabled: true, webhook: { kind: "ntfy", url: "https://ntfy.sh/my-agent" } } },
+    });
+    await runEvent(claudeCode.notification("Claude needs your permission"), { env });
+
+    expect(spawns(env).map((spawn) => spawn.command)).toEqual(["notify-send", "curl"]);
+    const { url, body } = webhookPost(env);
+    expect(url).toBe("https://ntfy.sh/my-agent");
+    expect(body).toContain(basename(env.cwd));
+    expect(body).toContain("Claude needs your permission");
+  });
+
+  it("posts a Slack message to a configured Slack webhook", async () => {
+    const env = envWith("linux", []);
+    const config = notifyConfig({ webhook: { kind: "slack", url: "https://hooks.slack.com/services/T/B/X" } });
+    await runEvent(claudeCode.notification("Claude needs your permission"), { env, config });
+
+    const { url, body } = webhookPost(env);
+    expect(url).toBe("https://hooks.slack.com/services/T/B/X");
+    const { text } = JSON.parse(body) as { text: string };
+    expect(text).toContain(basename(env.cwd));
+    expect(text).toContain("Claude needs your permission");
+  });
+
   it.each([
     { thresholdSeconds: 10, seconds: 15, notified: 1 },
     { thresholdSeconds: 60, seconds: 45, notified: 0 },

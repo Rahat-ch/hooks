@@ -43,6 +43,27 @@
               "description": "Notify at Stop only when the turn ran longer than this many seconds.",
               "type": "number",
               "minimum": 0
+            },
+            "webhook": {
+              "description": "Also post each notification to this webhook (opt-in).",
+              "type": "object",
+              "properties": {
+                "url": {
+                  "description": "The ntfy topic URL (e.g. https://ntfy.sh/my-topic) or Slack incoming-webhook URL.",
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "ntfy",
+                    "slack"
+                  ]
+                }
+              },
+              "required": [
+                "url",
+                "kind"
+              ],
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
