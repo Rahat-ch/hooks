@@ -7,12 +7,18 @@ export type Decision =
   | { readonly kind: "allow" }
   | { readonly kind: "block"; readonly reason: string }
   | { readonly kind: "ask"; readonly reason: string }
-  | { readonly kind: "context"; readonly text: string };
+  | { readonly kind: "context"; readonly text: string }
+  | { readonly kind: "terminal"; readonly sequence: string };
 
 export const allow = (): Decision => ({ kind: "allow" });
 export const block = (reason: string): Decision => ({ kind: "block", reason });
 export const ask = (reason: string): Decision => ({ kind: "ask", reason });
 export const addContext = (text: string): Decision => ({ kind: "context", text });
+/**
+ * Ask the Host to write a terminal escape sequence (e.g. an OSC 9 desktop
+ * notification) to its own terminal: hooks have no controlling terminal.
+ */
+export const terminalSequence = (sequence: string): Decision => ({ kind: "terminal", sequence });
 
 /** One Hook's Decision, labelled with the Hook that made it. */
 export interface HookDecision {
@@ -28,6 +34,8 @@ export interface Outcome {
   readonly reason: string | undefined;
   /** Added context from every Hook, in order. */
   readonly context: string | undefined;
+  /** Terminal escape sequences from every Hook, in order. */
+  readonly terminalSequence: string | undefined;
 }
 
 const rank = { allow: 1, ask: 2, block: 3 } as const;
@@ -35,7 +43,7 @@ const rank = { allow: 1, ask: 2, block: 3 } as const;
 export function combineDecisions(decisions: readonly HookDecision[]): Outcome {
   let permission: Outcome["permission"];
   for (const { decision } of decisions) {
-    if (decision.kind === "context") continue;
+    if (decision.kind === "context" || decision.kind === "terminal") continue;
     if (permission === undefined || rank[decision.kind] > rank[permission]) permission = decision.kind;
   }
 
@@ -43,10 +51,12 @@ export function combineDecisions(decisions: readonly HookDecision[]): Outcome {
     decision.kind === permission && "reason" in decision ? [`[hardhooks/${hook}] ${decision.reason}`] : [],
   );
   const contexts = decisions.flatMap(({ decision }) => (decision.kind === "context" ? [decision.text] : []));
+  const sequences = decisions.flatMap(({ decision }) => (decision.kind === "terminal" ? [decision.sequence] : []));
 
   return {
     permission,
     reason: reasons.length > 0 ? reasons.join("\n") : undefined,
     context: contexts.length > 0 ? contexts.join("\n\n") : undefined,
+    terminalSequence: sequences.length > 0 ? sequences.join("") : undefined,
   };
 }
