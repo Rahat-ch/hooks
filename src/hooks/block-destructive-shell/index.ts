@@ -21,13 +21,13 @@
  *   heredoc written to a file never triggers it.
  * - Blocks input it can't analyse (ADR-0004).
  */
-import { block, type Decision } from "../../decision";
 import * as s from "../../config/schema";
 import type { Environment } from "../../environment";
 import { GitQueries } from "../../git";
 import { analyzeShell } from "../../shell";
+import { cannotAnalyse, decide } from "../guard";
 import { defineHook } from "../hook";
-import { deleteFindings, type Finding } from "./deletes";
+import { deleteFindings } from "./deletes";
 import { deviceFindings } from "./devices";
 import { downloadFindings } from "./downloads";
 import { dynamicFindings } from "./dynamic";
@@ -51,13 +51,6 @@ function expandConfiguredPath(path: string, env: Environment): string | undefine
       return value ?? "";
     });
   return missing ? undefined : expanded;
-}
-
-function decide(findings: readonly Finding[]): Decision | undefined {
-  const strongest = findings.some((f) => f.decision === "block") ? "block" : findings.length > 0 ? "ask" : undefined;
-  if (strongest === undefined) return undefined;
-  const reason = [...new Set(findings.filter((f) => f.decision === strongest).map((f) => f.reason))].join("\n");
-  return strongest === "block" ? block(reason) : { kind: "ask", reason };
 }
 
 export const blockDestructiveShell = defineHook<BlockDestructiveShellOptions>({
@@ -92,10 +85,7 @@ export const blockDestructiveShell = defineHook<BlockDestructiveShellOptions>({
     if (command === undefined) return undefined;
     const analysis = analyzeShell(command, { cwd: event.cwd, home: env.home });
     if (!analysis.ok) {
-      return block(
-        `This command couldn't be analysed (${analysis.error}), so block-destructive-shell blocked it to be safe. ` +
-          "Fix the syntax or split it into simpler commands.",
-      );
+      return cannotAnalyse("block-destructive-shell", analysis.error);
     }
     const findings = [
       ...analysis.commands.flatMap((c) => [...deviceFindings(c), ...downloadFindings(c)]),

@@ -19,11 +19,7 @@ import { basename, join } from "node:path";
 import { parseOptions, type SimpleCommand } from "../../shell";
 import { globBase, isFilesystemRoot, isWithin, resolveOperand, samePath, toPosixRelative } from "../../paths";
 import type { GitQueries } from "../../git";
-
-export interface Finding {
-  readonly decision: "block" | "ask";
-  readonly reason: string;
-}
+import type { Finding } from "../guard";
 
 /** One path a recursive delete removes. */
 interface Target {

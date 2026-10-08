@@ -2,7 +2,7 @@
  * Formatting filesystems and writing to raw block devices: always blocked.
  */
 import { parseOptions, type SimpleCommand } from "../../shell";
-import type { Finding } from "./deletes";
+import type { Finding } from "../guard";
 
 /**
  * Block devices and raw memory: Linux disks, partitions, NVMe, MMC, RAID,

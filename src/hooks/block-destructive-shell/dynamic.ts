@@ -14,7 +14,7 @@
  * caller passes, e.g. `bash -c '"$@"' _ rm -rf ~`.
  */
 import type { SimpleCommand } from "../../shell";
-import type { Finding } from "./deletes";
+import type { Finding } from "../guard";
 
 /** Variables naming a program the user chose for themselves. */
 const userPrograms = ["EDITOR", "VISUAL", "PAGER"];

@@ -24,12 +24,8 @@ import { userConfigPath } from "../../config/load";
 import type { Environment } from "../../environment";
 import { canonicalPath, resolvePath } from "../../paths";
 import { parseOptions, type SimpleCommand } from "../../shell";
+import type { Finding } from "../guard";
 import { fedArguments } from "./shell";
-
-export interface OwnStateFinding {
-  readonly decision: "block" | "ask";
-  readonly reason: string;
-}
 
 /** Programs that only read the files they are given, or never take file names. */
 const readers = new Set([
@@ -156,7 +152,7 @@ const writeReason = (path: string, dir: string) =>
   "Ask the user to run `hardhooks trust` or edit it themselves.";
 
 /** Whether a write into hardhooks' own state is a file tool's target. */
-export function ownStateWrite(path: string, cwd: string, env: Environment): OwnStateFinding | undefined {
+export function ownStateWrite(path: string, cwd: string, env: Environment): Finding | undefined {
   const dir = new OwnState(ownStateDirs(env), env.home).dirOf(path, cwd);
   return dir === undefined ? undefined : { decision: "block", reason: writeReason(path, dir) };
 }
@@ -183,9 +179,9 @@ export function ownStateShellFinding(
   commands: readonly SimpleCommand[],
   projectDir: string,
   env: Environment,
-): OwnStateFinding | undefined {
+): Finding | undefined {
   const state = new OwnState(ownStateDirs(env), env.home);
-  let ask: OwnStateFinding | undefined;
+  let ask: Finding | undefined;
   for (const [index, command] of commands.entries()) {
     if (!command.executes) continue;
     const cwd = command.cwd ?? projectDir;

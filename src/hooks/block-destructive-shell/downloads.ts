@@ -6,7 +6,7 @@
  * file can be read before it is run.
  */
 import { parseOptions, type SimpleCommand } from "../../shell";
-import type { Finding } from "./deletes";
+import type { Finding } from "../guard";
 
 const DOWNLOADERS = ["curl", "wget", "fetch", "http", "https", "xh", "curlie", "aria2c", "lwp-request"];
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"]);

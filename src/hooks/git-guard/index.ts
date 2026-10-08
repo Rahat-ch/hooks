@@ -13,9 +13,9 @@
  * - Blocks input it can't analyse (ADR-0004).
  */
 import { resolve } from "node:path";
-import { block, type Decision } from "../../decision";
 import { analyzeShell, parseOptions, type ParsedArgs, type SimpleCommand } from "../../shell";
 import * as s from "../../config/schema";
+import { cannotAnalyse, decide, type Finding } from "../guard";
 import { defineHook } from "../hook";
 import {
   protectedBranchViolations,
@@ -31,11 +31,6 @@ import {
  * the detected default branch under `strict`.
  */
 export type GitGuardOptions = ProtectionOptions;
-
-interface Finding {
-  readonly decision: "block" | "ask";
-  readonly reason: string;
-}
 
 /** git's global options that take a separate value argument. */
 const globalOptionsWithValue = new Set([
@@ -209,13 +204,6 @@ function skipsHooks(call: GitInvocation): boolean {
   );
 }
 
-function decide(findings: readonly Finding[]): Decision | undefined {
-  const strongest = findings.some((f) => f.decision === "block") ? "block" : findings.length > 0 ? "ask" : undefined;
-  if (strongest === undefined) return undefined;
-  const reason = [...new Set(findings.filter((f) => f.decision === strongest).map((f) => f.reason))].join("\n");
-  return strongest === "block" ? block(reason) : { kind: "ask", reason };
-}
-
 export const gitGuard = defineHook<GitGuardOptions>({
   name: "git-guard",
   description: "Blocks git commands that rewrite shared history, destroy uncommitted work or skip git hooks.",
@@ -239,10 +227,7 @@ export const gitGuard = defineHook<GitGuardOptions>({
     if (command === undefined) return undefined;
     const analysis = analyzeShell(command, { cwd: event.cwd, home: env.home });
     if (!analysis.ok) {
-      return block(
-        `This command couldn't be analysed (${analysis.error}), so git-guard blocked it to be safe. ` +
-          "Fix the syntax or split it into simpler commands.",
-      );
+      return cannotAnalyse("git-guard", analysis.error);
     }
     const invocations = analysis.commands.flatMap((c) => gitInvocation(c, event.cwd) ?? []);
     const findings = invocations.flatMap((call) => [
