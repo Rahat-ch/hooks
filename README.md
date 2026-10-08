@@ -283,15 +283,25 @@ One file, `.hardhooks.json`, at the repository root. hardhooks uses the nearest 
 
 ## Trust
 
-<!-- verify after trust merge: this section describes `hardhooks trust` as specified for the parallel branch; check the wording, flags and file locations against the merged code. -->
+Some Hooks run commands that come from the project itself (ADR-0005):
 
-Some options run commands that come from the repository: `check`'s `command` and `editCommand`, `session-context`'s `commands` and `format-on-edit`'s `command`, plus the project commands `check` autodetects (`package.json` scripts and similar). Anyone who can commit to a repo, or get you to clone one, controls these. So, like direnv, hardhooks runs them only after you trust the repo:
+- command options set in the repo's `.hardhooks.json`: `check`'s `command` and `editCommand`, `format-on-edit`'s `command` and `session-context`'s `commands`;
+- commands `check` autodetects: `package.json` scripts, ruff, `go vet`, `cargo check`;
+- every formatter `format-on-edit` detects, because formatter configs and project-local binaries can run the project's own code.
+
+Anyone who can commit to a repo, or get you to clone one, controls these. So, like direnv, hardhooks runs them only in a project you trusted:
 
 ```sh
-hardhooks trust
+hardhooks trust            # list what the project would run, then ask
+hardhooks trust --status   # trusted, not trusted, or changed since you trusted it
+hardhooks trust --revoke   # forget the project
 ```
 
-Until then, those commands don't run. The rest of hardhooks works as usual, including all three Guards. If the config changes, trust it again.
+`--yes` skips the question, but is refused when run from inside Claude Code, so the agent can't trust a project for you.
+
+Until you trust a project, those commands are skipped and the Host shows a one-line notice once per session. Nothing is blocked, and everything else works as usual, including all three Guards. Commands set in your user config always run.
+
+Trust is tied to the project path and a hash of the files that decide what runs: `.hardhooks.json`, the `scripts` and `prettier` fields of `package.json`, and formatter config files. If one of them changes, for example after a `git pull`, run `hardhooks trust` again.
 
 ## Testing your setup: `hardhooks test`
 
