@@ -10,6 +10,8 @@ export interface ObservedDecision {
   decision: "block" | "ask" | "allow" | "none";
   reason?: string;
   context?: string;
+  /** Shown to the user only (Claude Code's `systemMessage`), never to the model. */
+  message?: string;
 }
 
 export function observe(result: HostResult): ObservedDecision {
@@ -19,6 +21,7 @@ export function observe(result: HostResult): ObservedDecision {
   const out = JSON.parse(result.stdout) as {
     decision?: string;
     reason?: string;
+    systemMessage?: string;
     hookSpecificOutput?: {
       permissionDecision?: string;
       permissionDecisionReason?: string;
@@ -37,6 +40,7 @@ export function observe(result: HostResult): ObservedDecision {
     if (specific.permissionDecisionReason !== undefined) observed.reason = specific.permissionDecisionReason;
   }
   if (specific.additionalContext !== undefined) observed.context = specific.additionalContext;
+  if (out.systemMessage !== undefined) observed.message = out.systemMessage;
   return observed;
 }
 
@@ -68,5 +72,13 @@ export function expectContext(result: HostResult, context: RegExp): ObservedDeci
   expect(result.exitCode, result.stderr).toBe(0);
   const observed = observe(result);
   expect(observed.context).toMatch(context);
+  return observed;
+}
+
+/** The user sees a message (`systemMessage`) matching `message`. */
+export function expectMessage(result: HostResult, message: RegExp): ObservedDecision {
+  expect(result.exitCode, result.stderr).toBe(0);
+  const observed = observe(result);
+  expect(observed.message, result.stdout).toMatch(message);
   return observed;
 }

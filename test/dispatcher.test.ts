@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config";
-import { addContext, allow, ask, block, type Decision } from "../src/decision";
+import { addContext, allow, ask, block, message, type Decision } from "../src/decision";
 import type { EventName, ToolKind } from "../src/event";
 import { defineHook, type Hook } from "../src/hooks/hook";
 import {
@@ -8,6 +8,7 @@ import {
   expectAsked,
   expectBlocked,
   expectContext,
+  expectMessage,
   expectNoDecision,
   fakeEnvironment,
   observe,
@@ -105,6 +106,26 @@ describe("dispatcher", () => {
     });
     expect(JSON.parse(result.stdout)).toMatchObject({ decision: "block" });
     expectBlocked(result, /tests are failing/);
+  });
+
+  it("shows a message to the user without blocking or adding context", async () => {
+    const result = await runEvent(claudeCode.stop(), {
+      hooks: [testHook("check", () => message("ran `npm run lint`: passed"), { events: ["Stop"] })],
+    });
+    const observed = expectMessage(result, /\[hardhooks\/check\] ran `npm run lint`: passed/);
+    expect(observed.decision).toBe("none");
+    expect(observed.context).toBeUndefined();
+  });
+
+  it("keeps messages beside another Hook's block", async () => {
+    const result = await runEvent(claudeCode.stop(), {
+      hooks: [
+        testHook("announcer", () => message("heads up"), { events: ["Stop"] }),
+        testHook("blocker", () => block("not yet"), { events: ["Stop"] }),
+      ],
+    });
+    expectBlocked(result, /not yet/);
+    expectMessage(result, /heads up/);
   });
 
   it("adds context at SessionStart", async () => {

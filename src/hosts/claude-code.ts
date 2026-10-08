@@ -90,6 +90,7 @@ const contextEvents = new Set<string>([
 export function renderClaudeCodeOutput(eventName: string, outcome: Outcome): string {
   const out: Record<string, unknown> = {};
   const specific: Record<string, unknown> = { hookEventName: eventName };
+  const systemMessages: string[] = [];
 
   if (outcome.permission === "block" || outcome.permission === "ask") {
     if (eventName === "PreToolUse") {
@@ -101,9 +102,12 @@ export function renderClaudeCodeOutput(eventName: string, outcome: Outcome): str
       out.reason = outcome.reason;
     } else if (outcome.reason !== undefined) {
       // The Event cannot be blocked; surface the reason to the user instead.
-      out.systemMessage = outcome.reason;
+      systemMessages.push(outcome.reason);
     }
   }
+  // Shown to the user only; a synchronous hook's systemMessage never reaches the model.
+  if (outcome.message !== undefined) systemMessages.push(outcome.message);
+  if (systemMessages.length > 0) out.systemMessage = systemMessages.join("\n");
   if (outcome.context !== undefined && contextEvents.has(eventName)) specific.additionalContext = outcome.context;
 
   if (Object.keys(specific).length > 1) out.hookSpecificOutput = specific;

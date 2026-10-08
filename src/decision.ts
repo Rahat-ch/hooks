@@ -7,12 +7,15 @@ export type Decision =
   | { readonly kind: "allow" }
   | { readonly kind: "block"; readonly reason: string }
   | { readonly kind: "ask"; readonly reason: string }
-  | { readonly kind: "context"; readonly text: string };
+  | { readonly kind: "context"; readonly text: string }
+  /** Tell the user something (an announcement or warning) without blocking or adding model context. */
+  | { readonly kind: "message"; readonly text: string };
 
 export const allow = (): Decision => ({ kind: "allow" });
 export const block = (reason: string): Decision => ({ kind: "block", reason });
 export const ask = (reason: string): Decision => ({ kind: "ask", reason });
 export const addContext = (text: string): Decision => ({ kind: "context", text });
+export const message = (text: string): Decision => ({ kind: "message", text });
 
 /** One Hook's Decision, labelled with the Hook that made it. */
 export interface HookDecision {
@@ -28,6 +31,8 @@ export interface Outcome {
   readonly reason: string | undefined;
   /** Added context from every Hook, in order. */
   readonly context: string | undefined;
+  /** Messages for the user from every Hook, in order, each prefixed with the Hook name. */
+  readonly message: string | undefined;
 }
 
 const rank = { allow: 1, ask: 2, block: 3 } as const;
@@ -35,7 +40,7 @@ const rank = { allow: 1, ask: 2, block: 3 } as const;
 export function combineDecisions(decisions: readonly HookDecision[]): Outcome {
   let permission: Outcome["permission"];
   for (const { decision } of decisions) {
-    if (decision.kind === "context") continue;
+    if (decision.kind === "context" || decision.kind === "message") continue;
     if (permission === undefined || rank[decision.kind] > rank[permission]) permission = decision.kind;
   }
 
@@ -43,10 +48,14 @@ export function combineDecisions(decisions: readonly HookDecision[]): Outcome {
     decision.kind === permission && "reason" in decision ? [`[hardhooks/${hook}] ${decision.reason}`] : [],
   );
   const contexts = decisions.flatMap(({ decision }) => (decision.kind === "context" ? [decision.text] : []));
+  const messages = decisions.flatMap(({ hook, decision }) =>
+    decision.kind === "message" ? [`[hardhooks/${hook}] ${decision.text}`] : [],
+  );
 
   return {
     permission,
     reason: reasons.length > 0 ? reasons.join("\n") : undefined,
     context: contexts.length > 0 ? contexts.join("\n\n") : undefined,
+    message: messages.length > 0 ? messages.join("\n") : undefined,
   };
 }
