@@ -7,6 +7,7 @@ import {
   claudeCode,
   expectNoDecision,
   fakeEnvironment,
+  observe,
   runEvent,
   type FakeEnvironment,
   type FakeEnvironmentOptions,
@@ -110,6 +111,33 @@ describe("notify", () => {
     const passed = [...args, ...Object.values(options.env ?? {})].join("\n");
     expect(passed).toContain(basename(env.cwd));
     expect(passed).toContain("Claude needs your permission");
+  });
+
+  it.each(["darwin", "linux", "win32"] as const)(
+    "on %s with no native notifier, falls back to an OSC 9 terminal notification the Host emits",
+    async (platform) => {
+      const env = envWith(platform, []);
+      const result = await runEvent(claudeCode.notification("Claude is waiting for your input"), {
+        env,
+        config: notifyConfig(),
+      });
+
+      expect(spawns(env)).toHaveLength(0);
+      const observed = observe(result);
+      expect(observed.decision).toBe("none");
+      expect(observed.terminalSequence).toBe(
+        `\u001b]9;${basename(env.cwd)}: Claude is waiting for your input\u0007`,
+      );
+    },
+  );
+
+  it("strips control characters from the OSC 9 text, so a message can't end the sequence early", async () => {
+    const env = envWith("linux", []);
+    const result = await runEvent(claudeCode.notification("done\u0007\u001b]52;c;aGk=\u0007 now"), {
+      env,
+      config: notifyConfig(),
+    });
+    expect(observe(result).terminalSequence).toBe(`\u001b]9;${basename(env.cwd)}: done]52;c;aGk= now\u0007`);
   });
 
   it.each([

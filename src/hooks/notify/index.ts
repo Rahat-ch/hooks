@@ -4,11 +4,12 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { terminalSequence, type Decision } from "../../decision";
 import type { Environment } from "../../environment";
 import type { HookEvent } from "../../event";
 import * as s from "../../config/schema";
 import { defineHook } from "../hook";
-import { desktopCommand } from "./desktop";
+import { desktopCommand, type Notification } from "./desktop";
 
 const optionsSchema = s.object({
   thresholdSeconds: s.number({
@@ -37,9 +38,26 @@ function turnSeconds(event: HookEvent, env: Environment): number | undefined {
   return (env.clock.now().getTime() - Date.parse(startedAt)) / 1000;
 }
 
-function deliver(title: string, body: string, env: Environment): void {
-  const native = desktopCommand({ title, body }, env);
-  if (native) env.processRunner.spawnDetached(native.command, native.args, native.env ? { env: native.env } : {});
+/**
+ * An OSC 9 desktop notification (iTerm2, WezTerm, Windows Terminal, ConEmu),
+ * minus control characters so the text can't end the sequence early or smuggle
+ * in another one; the Host rejects anything outside its allowlist.
+ */
+function osc9(notification: Notification): string {
+  const text = `${notification.title}: ${notification.body}`.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  return `\u001b]9;${text}\u0007`;
+}
+
+/**
+ * Start a native notification in a detached process. Without one, fall back
+ * to OSC 9: hooks have no controlling terminal (`/dev/tty` fails), so the Host
+ * writes the sequence to its own terminal from our `terminalSequence` output.
+ */
+function deliver(notification: Notification, env: Environment): Decision | undefined {
+  const native = desktopCommand(notification, env);
+  if (native === undefined) return terminalSequence(osc9(notification));
+  env.processRunner.spawnDetached(native.command, native.args, native.env ? { env: native.env } : {});
+  return undefined;
 }
 
 export const notify = defineHook({
@@ -56,14 +74,13 @@ export const notify = defineHook({
     const title = basename(event.cwd);
     if (event.name === "UserPromptSubmit") {
       recordTurnStart(event, env);
-    } else if (event.name === "Stop") {
-      const seconds = turnSeconds(event, env);
-      if (seconds !== undefined && seconds > options.thresholdSeconds) {
-        deliver(title, `Finished after ${Math.round(seconds)}s`, env);
-      }
-    } else {
-      deliver(title, event.message ?? "Needs your attention", env);
+      return undefined;
     }
-    return undefined;
+    if (event.name === "Stop") {
+      const seconds = turnSeconds(event, env);
+      if (seconds === undefined || seconds <= options.thresholdSeconds) return undefined;
+      return deliver({ title, body: `Finished after ${Math.round(seconds)}s` }, env);
+    }
+    return deliver({ title, body: event.message ?? "Needs your attention" }, env);
   },
 });
