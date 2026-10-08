@@ -40,7 +40,7 @@
     "test": "vitest run --project unit",
     "test:e2e": "vitest run --project e2e",
     "test:smoke": "npm run build && vitest run --project smoke",
-    "schema": "vitest run test/schema.test.ts --project unit --update",
+    "schema": "vitest run test/e2e/schema.test.ts --project e2e --update",
     "check": "npm run typecheck && npm test && npm run test:e2e && npm run test:smoke"
   },
   "devDependencies": {
