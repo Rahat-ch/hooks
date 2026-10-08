@@ -1,7 +1,16 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "vitest";
-import { claudeCode, expectBlocked, expectNoDecision, fakeEnvironment, runEvent } from "../../../test/helpers";
+import {
+  claudeCode,
+  expectBlocked,
+  expectFixture,
+  expectNoDecision,
+  fakeEnvironment,
+  loadFixtures,
+  runEvent,
+  writeRepoConfig,
+} from "../../../test/helpers";
 
 const read = (file_path: string) => claudeCode.preToolUse("Read", { file_path });
 const edit = (file_path: string) => claudeCode.preToolUse("Edit", { file_path, old_string: "a", new_string: "b" });
@@ -25,20 +34,24 @@ describe("protect-secrets", () => {
       expectBlocked(await runEvent(tool("~/.ssh/id_rsa"), { env }), /pattern `~\/\.ssh\/`/);
     });
 
-    it.each([
-      "MultiEdit",
-      "NotebookEdit",
-    ])("blocks %s of a secret", async (tool) => {
-      expectBlocked(await runEvent(claudeCode.preToolUse(tool, { file_path: "config/.env.production", notebook_path: "x.pem" })));
+    it.each(["MultiEdit", "NotebookEdit"])("blocks %s of a secret", async (tool) => {
+      expectBlocked(
+        await runEvent(claudeCode.preToolUse(tool, { file_path: "config/.env.production", notebook_path: "x.pem" })),
+      );
     });
 
-    it.each([".env.example", ".env.sample", ".env.template", "config/.env.example", "src/env.ts", "README.md", "id_rsa.pub"])(
-      "allows `%s`",
-      async (path) => {
-        expectNoDecision(await runEvent(read(path)));
-        expectNoDecision(await runEvent(write(path)));
-      },
-    );
+    it.each([
+      ".env.example",
+      ".env.sample",
+      ".env.template",
+      "config/.env.example",
+      "src/env.ts",
+      "README.md",
+      "id_rsa.pub",
+    ])("allows `%s`", async (path) => {
+      expectNoDecision(await runEvent(read(path)));
+      expectNoDecision(await runEvent(write(path)));
+    });
 
     it.each([
       ["server.pem", "*.pem"],
@@ -67,16 +80,12 @@ describe("protect-secrets", () => {
   });
 
   describe("shell", () => {
-    it.each([
-      "cat .env",
-      "grep KEY .env",
-      "cp .env /tmp/x",
-      "echo x > .env",
-      "source .env",
-      "bash -c 'cat .env'",
-    ])("blocks `%s` (acceptance)", async (command) => {
-      expectBlocked(await runEvent(claudeCode.bash(command)), /pattern `\.env`/);
-    });
+    it.each(["cat .env", "grep KEY .env", "cp .env /tmp/x", "echo x > .env", "source .env", "bash -c 'cat .env'"])(
+      "blocks `%s` (acceptance)",
+      async (command) => {
+        expectBlocked(await runEvent(claudeCode.bash(command)), /pattern `\.env`/);
+      },
+    );
 
     describe("must block", () => {
       it.each([
@@ -131,6 +140,21 @@ describe("protect-secrets", () => {
         "cat .env | base64",
         "find . -name .env -delete",
         "bash .env",
+        'bash -c "source .env && echo $API_KEY"',
+        'sh -c "cat .env > $OUT"',
+        "cat .e''nv",
+        "cat ./config/../.ENV",
+        "cp -t /tmp .env",
+        "vim .env",
+        "exec 3< .env",
+        "git show HEAD:.env",
+        `python3 -c "print(open('.env').read())"`,
+        `node -e "console.log(require('fs').readFileSync('.env.local', 'utf8'))"`,
+        "echo .env | xargs cat",
+        "find . -name .env | xargs cat",
+        "find . -name '*.pem' -exec cat {} \\;",
+        "cat $(find . -name .env)",
+        "cat `ls -a | grep env`/../.env",
       ])("`%s`", async (command) => {
         expectBlocked(await runEvent(claudeCode.bash(command)), /protected pattern/);
       });
@@ -182,10 +206,127 @@ describe("protect-secrets", () => {
         "cat package.json",
         "rm -rf dist",
         "echo $API_KEY",
+        `node -e "console.log(process.env.NODE_ENV)"`,
+        "python3 manage.py test",
+        "git ls-files | xargs grep -n TODO",
+        "find . -name '*.ts' -exec wc -l {} +",
+        "find . -name .env | xargs ls -la",
+        "cat $(git ls-files '*.md')",
       ])("`%s`", async (command) => {
         expectNoDecision(await runEvent(claudeCode.bash(command)));
       });
     });
+  });
+
+  describe("project ignore files", () => {
+    it.each([".claudeignore", ".cursorignore", ".aiignore"])(
+      "protects patterns from %s, naming the file",
+      async (file) => {
+        const env = fakeEnvironment();
+        writeFileSync(
+          join(env.cwd, file),
+          "# private data\nsecrets/\nconfig/credentials.yml\n*.secret\n!public.secret\n",
+        );
+        const named = new RegExp(`\\(${file.replace(".", "\\.")}\\)`);
+        expectBlocked(await runEvent(read("secrets/db.txt"), { env }), named);
+        expectBlocked(await runEvent(claudeCode.bash("cat secrets/nested/token"), { env }), /pattern `secrets\/`/);
+        expectBlocked(await runEvent(claudeCode.bash("cp config/credentials.yml /tmp"), { env }), named);
+        expectBlocked(await runEvent(write("deep/dir/api.secret"), { env }), /pattern `\*\.secret`/);
+        expectNoDecision(await runEvent(read("public.secret"), { env }));
+        expectNoDecision(await runEvent(read("other/config/credentials.yml"), { env }));
+        expectNoDecision(await runEvent(read("src/index.ts"), { env }));
+      },
+    );
+
+    it("can't re-include a built-in pattern with `!`", async () => {
+      const env = fakeEnvironment();
+      writeFileSync(join(env.cwd, ".cursorignore"), "!.env\n");
+      expectBlocked(await runEvent(read(".env"), { env }), /pattern `\.env` \(built-in\)/);
+    });
+
+    it("reads them from the repository root when the Host works in a subdirectory", async () => {
+      const env = fakeEnvironment();
+      mkdirSync(join(env.cwd, ".git"));
+      mkdirSync(join(env.cwd, "packages", "api"), { recursive: true });
+      writeFileSync(join(env.cwd, ".aiignore"), "packages/api/fixtures/\n");
+      const payload = { ...read("fixtures/users.json"), cwd: join(env.cwd, "packages", "api") };
+      expectBlocked(await runEvent(JSON.stringify(payload), { env }), /packages\/api\/fixtures\//);
+    });
+
+    it("are ignored when `ignoreFiles` is empty", async () => {
+      const env = fakeEnvironment();
+      writeFileSync(join(env.cwd, ".cursorignore"), "secrets/\n");
+      writeRepoConfig(env, { hooks: { "protect-secrets": { ignoreFiles: [] } } });
+      expectNoDecision(await runEvent(read("secrets/db.txt"), { env }));
+      expectBlocked(await runEvent(read(".env"), { env }));
+    });
+  });
+
+  describe("config", () => {
+    it("adds protected patterns and exceptions", async () => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, {
+        hooks: { "protect-secrets": { protect: ["*.secret", "config/prod.yml"], allow: [".env.test", "fixtures/"] } },
+      });
+      expectBlocked(await runEvent(read("x.secret"), { env }), /pattern `\*\.secret` \(your `protect` option\)/);
+      expectBlocked(await runEvent(claudeCode.bash("cat config/prod.yml"), { env }), /config\/prod\.yml/);
+      expectNoDecision(await runEvent(read("other/config/prod.yml"), { env }));
+      expectNoDecision(await runEvent(read(".env.test"), { env }));
+      expectNoDecision(await runEvent(claudeCode.bash("cat fixtures/tls/test.key"), { env }));
+      expectBlocked(await runEvent(read(".env.production"), { env }));
+    });
+
+    it("can protect a file that is allowed by default", async () => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, { hooks: { "protect-secrets": { protect: [".env.example"] } } });
+      expectBlocked(await runEvent(read(".env.example"), { env }), /protect/);
+    });
+
+    it.each(["standard", "strict"])("is enabled under the %s Preset", async (preset) => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, { preset });
+      expectBlocked(await runEvent(read(".env"), { env }));
+    });
+
+    it("blocks when its options are invalid", async () => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, { hooks: { "protect-secrets": { protect: ".env" } } });
+      expectBlocked(await runEvent(read("README.md"), { env }), /invalid/);
+    });
+  });
+
+  describe("Windows paths", () => {
+    const windows = () => ({ ...fakeEnvironment({ platform: "win32" }), home: String.raw`C:\Users\Dev` });
+    const at = (payload: Record<string, unknown>) =>
+      JSON.stringify({ ...payload, cwd: String.raw`C:\Users\Dev\project` });
+
+    it.each([
+      String.raw`C:\Users\Dev\project\.env`,
+      String.raw`.\config\.env.local`,
+      String.raw`C:\Users\Dev\.ssh\id_rsa`,
+      String.raw`c:\users\dev\.SSH\ID_RSA`,
+      "/c/Users/Dev/.aws/credentials",
+      String.raw`~\.kube\config`,
+      String.raw`D:\certs\server.PEM`,
+    ])("blocks file tools on `%s`", async (path) => {
+      expectBlocked(await runEvent(at(read(path)), { env: windows() }), /protected pattern/);
+    });
+
+    it("allows `.env.example` and ordinary files", async () => {
+      expectNoDecision(await runEvent(at(read(String.raw`C:\Users\Dev\project\.env.example`)), { env: windows() }));
+      expectNoDecision(await runEvent(at(read(String.raw`C:\Users\Dev\project\src\app.ts`)), { env: windows() }));
+    });
+
+    it.each([String.raw`cat 'C:\Users\Dev\project\.env'`, "cat C:/Users/Dev/.ssh/id_ed25519", "cat .env"])(
+      "blocks shell access: `%s`",
+      async (command) => {
+        expectBlocked(await runEvent(at(claudeCode.bash(command)), { env: windows() }), /protected pattern/);
+      },
+    );
+  });
+
+  it.each(loadFixtures(new URL("./fixtures", import.meta.url)))("fixture $file: $description", async (fixture) => {
+    expectFixture(await runEvent(JSON.stringify(fixture.payload), { event: fixture.event }), fixture);
   });
 
   describe("search tools", () => {

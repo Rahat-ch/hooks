@@ -12,7 +12,7 @@
 import { readdirSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 import { hasGlob, shellSegmentRegex, type SecretMatch, type SecretsMatcher } from "../../secrets";
-import { parseOptions, type SimpleCommand } from "../../shell";
+import { analyzeShell, parseOptions, type SimpleCommand } from "../../shell";
 
 export interface ShellFinding {
   /** The argument or redirection target as written. */
@@ -68,9 +68,36 @@ const searchers: Record<string, { withValue: string[]; patternOptions: string[] 
   },
   rg: {
     withValue: [
-      "-e", "--regexp", "-f", "--file", "-A", "-B", "-C", "-m", "--max-count", "-g", "--glob", "--iglob",
-      "-t", "--type", "-T", "--type-not", "-M", "--max-columns", "-j", "--threads", "-E", "--encoding",
-      "--max-depth", "--max-filesize", "--sort", "--sortr", "-r", "--replace", "--colors", "--color",
+      "-e",
+      "--regexp",
+      "-f",
+      "--file",
+      "-A",
+      "-B",
+      "-C",
+      "-m",
+      "--max-count",
+      "-g",
+      "--glob",
+      "--iglob",
+      "-t",
+      "--type",
+      "-T",
+      "--type-not",
+      "-M",
+      "--max-columns",
+      "-j",
+      "--threads",
+      "-E",
+      "--encoding",
+      "--max-depth",
+      "--max-filesize",
+      "--sort",
+      "--sortr",
+      "-r",
+      "--replace",
+      "--colors",
+      "--color",
     ],
     patternOptions: ["-e", "--regexp", "-f", "--file"],
   },
@@ -87,20 +114,70 @@ function fileArguments(command: SimpleCommand): readonly string[] {
   if (program === "git") {
     const subcommand = args.find((arg) => !arg.startsWith("-"));
     if (subcommand !== undefined && gitNamesOnly.has(subcommand)) return [];
-    // Commit messages are prose, not file names.
-    return args.filter((arg, i) => !["-m", "--message"].includes(args[i - 1] ?? "") && !arg.startsWith("--message="));
+    // Commit messages are prose, not file names; `HEAD:.env` names a file at a revision.
+    return args
+      .filter((arg, i) => !["-m", "--message"].includes(args[i - 1] ?? "") && !arg.startsWith("--message="))
+      .flatMap((arg) => (/^[^:/]+:[^/]/.test(arg) ? [arg, arg.slice(arg.indexOf(":") + 1)] : [arg]));
   }
   const searcher = searchers[program];
   if (searcher !== undefined) {
     const parsed = parseOptions(args, { withValue: searcher.withValue });
     const explicitPattern = parsed.options.some((o) => searcher.patternOptions.includes(o.name));
-    const patternValues = parsed.options
-      .filter((o) => o.name === "-e" || o.name === "--regexp")
-      .map((o) => o.value);
+    const patternValues = parsed.options.filter((o) => o.name === "-e" || o.name === "--regexp").map((o) => o.value);
     return [
       ...parsed.options.flatMap((o) => (o.value === undefined || patternValues.includes(o.value) ? [] : [o.value])),
       ...(explicitPattern ? parsed.operands : parsed.operands.slice(1)),
     ];
+  }
+  return args;
+}
+
+/** Programs whose arguments may be code that opens files: `python -c "open('.env')"`. */
+const interpreters = new Set([
+  "python",
+  "python3",
+  "python2",
+  "node",
+  "deno",
+  "bun",
+  "ruby",
+  "perl",
+  "php",
+  "lua",
+  "osascript",
+  "pwsh",
+  "powershell",
+]);
+
+/**
+ * Arguments to scan word by word for file names: interpreter code, and
+ * arguments holding a substitution that couldn't be resolved, such as
+ * `$(find . -name .env)`, whose output is a file name we can't know.
+ */
+function codeArguments(command: SimpleCommand): readonly string[] {
+  if (namesOnly.has(command.program)) return [];
+  const args = command.argv.slice(1);
+  if (interpreters.has(command.program)) return args;
+  return args.filter((arg) => arg.includes("$(") || arg.includes("`"));
+}
+
+/** File-name-like words in code or a command line. */
+function words(text: string): string[] {
+  return text.match(/[^\s'"`()[\]{},;<>|&$]+/g) ?? [];
+}
+
+/**
+ * Arguments that `xargs` or `find -exec` will hand to `command`: whatever
+ * the previous pipeline stage or the `find` names, e.g. `.env` in
+ * `find . -name .env | xargs cat`.
+ */
+function fedArguments(command: SimpleCommand, previous: readonly SimpleCommand[]): readonly string[] {
+  if (namesOnly.has(command.program) || command.program === "find") return [];
+  const args: string[] = [];
+  if (command.via.includes("xargs")) args.push(...(command.pipedFrom ?? []).flatMap((c) => c.argv.slice(1)));
+  if (command.via.includes("find")) {
+    const find = [...previous].reverse().find((c) => c.program === "find");
+    if (find) args.push(...find.argv.slice(1));
   }
   return args;
 }
@@ -147,21 +224,47 @@ function check(operand: string, cwd: string, matcher: SecretsMatcher): ShellFind
   return undefined;
 }
 
+const shells = new Set(["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash"]);
+/** How deep to look into shell scripts that `analyzeShell` left opaque. */
+const maxOpaqueDepth = 4;
+
+/**
+ * `analyzeShell` can't see into `bash -c "...$VAR..."` (the script isn't
+ * static), so analyse its text as written: unresolved expansions stay as
+ * text, which is enough to spot `source .env` in `bash -c "source .env && echo $KEY"`.
+ */
+function opaqueScripts(command: SimpleCommand, cwd: string, home: string): readonly SimpleCommand[] {
+  if (!shells.has(command.program) || !command.dynamic) return [];
+  return command.argv.slice(1).flatMap((arg) => {
+    if (arg.startsWith("-")) return [];
+    const analysis = analyzeShell(arg, { cwd, home });
+    return analysis.ok ? analysis.commands : [];
+  });
+}
+
 /** The first protected path the commands would read or write, if any. */
 export function shellFinding(
   commands: readonly SimpleCommand[],
   projectDir: string,
+  home: string,
   matcher: SecretsMatcher,
+  depth = 0,
 ): ShellFinding | undefined {
-  for (const command of commands) {
+  for (const [index, command] of commands.entries()) {
     if (!command.executes) continue;
     const cwd = command.cwd ?? projectDir;
-    for (const redirection of command.redirections) {
-      const finding = check(redirection.target, cwd, matcher);
+    if (depth < maxOpaqueDepth) {
+      const finding = shellFinding(opaqueScripts(command, cwd, home), cwd, home, matcher, depth + 1);
       if (finding) return finding;
     }
-    for (const arg of fileArguments(command)) {
-      const finding = check(arg, cwd, matcher);
+    const operands = [
+      ...command.redirections.map((r) => r.target),
+      ...fileArguments(command),
+      ...codeArguments(command).flatMap(words),
+      ...fedArguments(command, commands.slice(0, index)),
+    ];
+    for (const operand of operands) {
+      const finding = check(operand, cwd, matcher);
       if (finding) return finding;
     }
   }

@@ -119,9 +119,11 @@ function fillGlob(glob: string, filler: string): string {
 function braceAlternatives(glob: string): string[] {
   const match = /\{([^{}]*)\}/.exec(glob);
   if (!match) return [glob];
-  return match[1]!.split(",").flatMap((option) =>
-    braceAlternatives(glob.slice(0, match.index) + option + glob.slice(match.index + match[0].length)),
-  );
+  return match[1]!
+    .split(",")
+    .flatMap((option) =>
+      braceAlternatives(glob.slice(0, match.index) + option + glob.slice(match.index + match[0].length)),
+    );
 }
 
 interface Source {
@@ -148,7 +150,9 @@ export function secretsMatcher(options: SecretsOptions): SecretsMatcher {
   const base = canonicalPath(options.projectDir);
   const { home } = options;
   const gitignore = { base, home, gitignore: true };
-  const sources: Source[] = [{ name: "built-in", rules: compileRules(builtInPatterns, { base, home, gitignore: false }) }];
+  const sources: Source[] = [
+    { name: "built-in", rules: compileRules(builtInPatterns, { base, home, gitignore: false }) },
+  ];
   for (const name of options.ignoreFiles ?? defaultIgnoreFiles) {
     const lines = readIgnoreFile(`${options.projectDir}/${name}`);
     if (lines !== undefined) sources.push({ name, rules: compileRules(lines, gitignore) });
