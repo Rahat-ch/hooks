@@ -287,6 +287,21 @@ describe("hardhooks test", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    it("asks for the Events a Hook's options make active, and only those", async () => {
+      const env = fakeEnvironment();
+      const bundlePath = join(env.cwd, "node_modules", "hardhooks", "dist", "hardhooks.mjs");
+      mkdirSync(dirname(bundlePath), { recursive: true });
+      writeFileSync(bundlePath, "");
+      writeRepoConfig(env, { hooks: { check: { enabled: true } } });
+      await runInit({ env, mode: "yes", bundlePath });
+      expect((await runTestCommand({ env })).stderr).toBe("");
+
+      writeRepoConfig(env, { hooks: { check: { enabled: true, subagentStop: true } } });
+      const result = await runTestCommand({ env });
+      expect(result.stderr).toMatch(/warning: check is enabled, but no hardhooks entry for SubagentStop is installed/);
+      expect(result.stderr.match(/warning/g)).toHaveLength(1);
+    });
+
     it("warns when the installed entry's matcher doesn't cover a newly enabled Hook's tools", async () => {
       const env = await installed();
       writeRepoConfig(env, { hooks: { reader: { enabled: true } } });

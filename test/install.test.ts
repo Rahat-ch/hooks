@@ -91,6 +91,33 @@ describe("hardhooks init", () => {
     });
   });
 
+  it("writes only the Events the enabled Hooks' options make active", async () => {
+    const env = fakeEnvironment();
+    // check alone: SubagentStop and per-edit checks are opt-in.
+    writeRepoConfig(env, { preset: "standard", hooks: { check: { enabled: true }, "format-on-edit": { enabled: false } } });
+
+    const plain = await runInit({ env, mode: "yes" });
+
+    expect(plain.stdout).toMatch(/^ {2}Stop: check$/m);
+    expect(plain.stdout).not.toMatch(/SubagentStop|PostToolUse/);
+    expect(Object.keys(readSettings(projectSettingsPath(env)).hooks)).toEqual(["SessionStart", "PreToolUse", "Stop"]);
+
+    writeRepoConfig(env, {
+      hooks: { check: { enabled: true, subagentStop: true, editCommand: "eslint" }, "format-on-edit": { enabled: false } },
+    });
+    const optedIn = await runInit({ env, mode: "yes" });
+
+    expect(optedIn.stdout).toMatch(/^ {2}PostToolUse \[Edit\|MultiEdit\|NotebookEdit\|Write\]: check$/m);
+    expect(optedIn.stdout).toMatch(/^ {2}SubagentStop: check$/m);
+    expect(Object.keys(readSettings(projectSettingsPath(env)).hooks)).toEqual([
+      "SessionStart",
+      "PreToolUse",
+      "Stop",
+      "PostToolUse",
+      "SubagentStop",
+    ]);
+  });
+
   it("keeps every existing setting and non-hardhooks hook", async () => {
     const env = fakeEnvironment();
     const userGroup = { matcher: "Bash", hooks: [{ type: "command", command: "./audit.sh" }] };

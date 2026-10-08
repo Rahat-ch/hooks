@@ -9,7 +9,7 @@
  */
 import { hookSettings, type ResolvedConfig } from "../config";
 import type { EventName, ToolKind } from "../event";
-import type { Hook } from "../hooks/hook";
+import { activeEvents, type Hook } from "../hooks/hook";
 import { claudeCodeTools } from "../hosts/claude-code";
 
 /** Every Event, in the order init adds them to a settings file. */
@@ -54,11 +54,14 @@ function toolMatcher(hooks: readonly Hook<any>[]): string | undefined {
   return names.join("|");
 }
 
-/** One entry per Event that at least one enabled Hook handles. */
+/** One entry per Event that at least one enabled Hook handles with its resolved options. */
 export function wantedEntries(hooks: readonly Hook<any>[], config: ResolvedConfig): Entry[] {
-  const enabled = hooks.filter((hook) => hookSettings(hook, config).enabled);
+  const active = hooks.flatMap((hook) => {
+    const settings = hookSettings(hook, config);
+    return settings.enabled ? [{ hook, events: activeEvents(hook, settings.options) }] : [];
+  });
   return eventOrder.flatMap((event) => {
-    const handling = enabled.filter((hook) => hook.events.includes(event));
+    const handling = active.filter(({ events }) => events.includes(event)).map(({ hook }) => hook);
     if (handling.length === 0) return [];
     return [
       {

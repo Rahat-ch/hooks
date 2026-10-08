@@ -29,6 +29,13 @@ export interface Hook<Options = Record<string, never>> {
   readonly description: string;
   /** Events this Hook handles. */
   readonly events: readonly EventName[];
+  /**
+   * The subset of `events` it handles with these resolved options, when an
+   * Event is opt-in (e.g. check's SubagentStop). Omit when it always handles
+   * all of them. `init` installs, and the dispatcher runs the Hook for, only
+   * these Events; see `activeEvents()`.
+   */
+  activeEvents?(options: Options): readonly EventName[];
   /** Tool kinds it handles on tool Events (PreToolUse/PostToolUse). Omit to handle every tool. */
   readonly tools?: readonly ToolKind[];
   /**
@@ -111,6 +118,13 @@ export interface DispatchRecord {
   readonly result: HostResult;
   /** From reading the payload to the final output. */
   readonly durationMs: number;
+}
+
+/** The Events a Hook handles with these options: its `activeEvents`, limited to `events`, else all of `events`. */
+export function activeEvents<Options>(hook: Hook<Options>, options: Options): readonly EventName[] {
+  if (hook.activeEvents === undefined) return hook.events;
+  const active = hook.activeEvents(options);
+  return hook.events.filter((event) => active.includes(event));
 }
 
 /** Identity helper that infers `Options` from `optionsSchema` and `defaults`, and checks they agree. */

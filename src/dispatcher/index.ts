@@ -8,7 +8,7 @@ import { formatConfigError, loadConfig, type ConfigError } from "../config/load"
 import { block, combineDecisions, message, type HookDecision, type Outcome } from "../decision";
 import type { Environment } from "../environment";
 import type { EventName, HookEvent } from "../event";
-import type { Hook, HookRun } from "../hooks/hook";
+import { activeEvents, type Hook, type HookRun } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
 import { parseClaudeCodePayload, renderClaudeCodeOutput } from "../hosts/claude-code";
 import { capabilitiesOf } from "../hosts";
@@ -97,7 +97,11 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
   if (!loaded.ok) return invalidConfig(eventName, request, hooks, loaded.errors);
   const { config } = loaded;
 
-  const enabled = hooks.filter((hook) => hook.events.includes(eventName) && hookSettings(hook, config).enabled);
+  // With the full config, as `init` decides what to install; repo commands are withheld only when running.
+  const enabled = hooks.filter((hook) => {
+    const settings = hookSettings(hook, config);
+    return settings.enabled && activeEvents(hook, settings.options).includes(eventName);
+  });
   // Fast path: the plugin's static hooks file calls us for every Event.
   if (enabled.length === 0) return { stdout: "", stderr: "", exitCode: 0 };
 

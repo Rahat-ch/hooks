@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config";
+import * as s from "../src/config/schema";
 import { addContext, allow, ask, block, message, terminalSequence, type Decision } from "../src/decision";
 import type { EventName, ToolKind } from "../src/event";
 import { defineHook, type DispatchRecord, type Hook } from "../src/hooks/hook";
@@ -18,6 +19,7 @@ import {
   observe,
   runEvent,
   writeProjectFile,
+  writeRepoConfig,
 } from "./helpers";
 
 function testHook(
@@ -284,6 +286,28 @@ describe("dispatcher", () => {
     const hooks = [testHook("edit-only", () => block("no edits"), { tools: ["edit"] })];
     expectNoDecision(await runEvent(bash, { hooks }));
     expectBlocked(await runEvent(claudeCode.preToolUse("Edit", { file_path: "a.ts" }), { hooks }), /no edits/);
+  });
+
+  it("runs a Hook only on the Events its options make active", async () => {
+    const optionsSchema = s.object({ onStop: s.boolean() });
+    const stopper = defineHook({
+      name: "stopper",
+      description: "test-only Hook whose Stop handling is opt-in",
+      events: ["SessionStart", "Stop"],
+      activeEvents: (options) => (options.onStop ? ["SessionStart", "Stop"] : ["SessionStart"]),
+      failMode: "open",
+      optionsSchema,
+      defaults: { standard: { enabled: true, options: { onStop: false } }, strict: { enabled: true, options: { onStop: false } } },
+      run: (event) => message(`ran on ${event.name}`),
+    });
+    const hooks = [stopper];
+
+    expectMessage(await runEvent(claudeCode.sessionStart(), { hooks }), /ran on SessionStart/);
+    expectNoDecision(await runEvent(claudeCode.stop(), { hooks }));
+
+    const env = fakeEnvironment();
+    writeRepoConfig(env, { hooks: { stopper: { onStop: true } } });
+    expectMessage(await runEvent(claudeCode.stop(), { env, hooks }), /ran on Stop/);
   });
 
   it("skips Hooks disabled in config", async () => {

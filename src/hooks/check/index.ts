@@ -167,6 +167,12 @@ export const check = defineHook<CheckOptions>({
   name: "check",
   description: "Runs the project's checks when the Host tries to stop, and blocks the stop while they fail.",
   events: ["Stop", "SubagentStop", "PostToolUse"],
+  // SubagentStop and per-edit checks are opt-in, so init installs those Events only when enabled.
+  activeEvents: (options) => [
+    "Stop",
+    ...(options.subagentStop ? (["SubagentStop"] as const) : []),
+    ...(options.editCommand !== undefined ? (["PostToolUse"] as const) : []),
+  ],
   tools: ["edit", "write"],
   failMode: "open",
   optionsSchema,

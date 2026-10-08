@@ -43,7 +43,7 @@ cd your-repo
 hardhooks init
 ```
 
-`init` prints the entries it will add to `.claude/settings.json` as a diff and asks before writing. It adds one entry per Event, and only for the Events your enabled Hooks need. It keeps every existing setting and hook, and you can run it again whenever you enable or disable a Hook.
+`init` prints the entries it will add to `.claude/settings.json` as a diff and asks before writing. It adds one entry per Event, and only for the Events your enabled Hooks need with their current options (for example, `check` adds SubagentStop only with `subagentStop`). It keeps every existing setting and hook, and you can run it again whenever you enable or disable a Hook or one of those options. `hardhooks test` warns when an Event your config needs isn't installed.
 
 ```
 hardhooks init [--user] [--dry-run] [--yes]
