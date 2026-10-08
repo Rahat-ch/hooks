@@ -19,6 +19,7 @@ import {
   hermeticGitEnvironment,
   initRealGitRepo,
   runInit,
+  runTrust,
   userSettingsPath,
   writeRepoConfig,
   writeSettings,
@@ -131,6 +132,37 @@ describe("hardhooks test", () => {
     expect(result.stdout).toMatch(/FAIL\s+cases\.json\s+wrong reason\n\s+reason: expected to match \/lease\/i, got ".*force/);
     expect(result.stdout).toMatch(/FAIL\s+cases\.json\s+wrong context\n\s+context: expected to match \/Branch:\/i, got "Today: /);
     expect(result.exitCode).toBe(1);
+  });
+
+  describe("trust (ADR-0005)", () => {
+    const listsPullRequests = [
+      { name: "lists pull requests", event: "SessionStart", expect: { context: "\\$ gh pr list" } },
+    ];
+
+    it("runs cases as the Hooks behave in this project: without trust, the repo's commands are left out, and it says why", async () => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, { hooks: { "session-context": { commands: [["gh", "pr", "list"]] } } });
+      writeCases(env, "context.json", listsPullRequests);
+
+      const result = await runTestCommand({ env });
+
+      expect(result.stdout).toMatch(/FAIL\s+context\.json\s+lists pull requests/);
+      expect(result.stderr).toMatch(
+        /this project is not trusted, so hardhooks won't run its commands:\n.*session-context: commands from \.hardhooks\.json: gh pr list[\s\S]*`hardhooks trust`/,
+      );
+    });
+
+    it("in a trusted project, the repo's commands count (still sandboxed: nothing really runs)", async () => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, { hooks: { "session-context": { commands: [["gh", "pr", "list"]] } } });
+      writeCases(env, "context.json", listsPullRequests);
+      await runTrust({ env, mode: "yes" });
+
+      const result = await runTestCommand({ env });
+
+      expect(result.stdout).toMatch(/PASS\s+context\.json\s+lists pull requests/);
+      expect(result.stderr).not.toMatch(/trust/);
+    });
   });
 
   describe("side effects", () => {

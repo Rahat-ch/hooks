@@ -39,8 +39,8 @@ interface Formatter {
   name: string;
   /** File extensions (lower case, with the dot) it formats. */
   extensions: ReadonlySet<string>;
-  /** Whether `dir` holds this formatter's project config. */
-  configuredIn(dir: string): boolean;
+  /** The file in `dir` holding this formatter's project config, if any. */
+  configuredIn(dir: string): string | undefined;
   /** How to format `file`, run from `configDir` (where its config was found). */
   invocation(file: string, where: Where, configDir: string): Omit<Invocation, "cwd">;
 }
@@ -72,12 +72,12 @@ function readJson(path: string): Record<string, unknown> | undefined {
   }
 }
 
-const anyExists = (dir: string, names: readonly string[]) => names.some((name) => existsSync(join(dir, name)));
+const firstExisting = (dir: string, names: readonly string[]) => names.find((name) => existsSync(join(dir, name)));
 
-/** Whether `dir/pyproject.toml` has a `[tool.<name>]` table (or a subtable of it). */
-function pyprojectHasTool(dir: string, name: string): boolean {
+/** "pyproject.toml" when `dir/pyproject.toml` has a `[tool.<name>]` table (or a subtable of it). */
+function pyprojectTool(dir: string, name: string): string | undefined {
   const text = readText(join(dir, "pyproject.toml"));
-  return text !== undefined && new RegExp(`^\\s*\\[tool\\.${name}[\\].]`, "m").test(text);
+  return text !== undefined && new RegExp(`^\\s*\\[tool\\.${name}[\\].]`, "m").test(text) ? "pyproject.toml" : undefined;
 }
 
 /** The file's directory and its ancestors, up to and including the nearest one with `.git` (or the filesystem root). */
@@ -151,37 +151,39 @@ const formatters: readonly Formatter[] = [
   {
     name: "prettier",
     extensions: exts(`${scriptExts} json json5 jsonc css scss less html htm vue md markdown mdx yaml yml graphql gql hbs handlebars`),
-    configuredIn: (dir) => anyExists(dir, prettierConfigs) || readJson(join(dir, "package.json"))?.prettier !== undefined,
+    configuredIn: (dir) =>
+      firstExisting(dir, prettierConfigs) ??
+      (readJson(join(dir, "package.json"))?.prettier !== undefined ? "package.json" : undefined),
     invocation: (file, where) => run(nodeTool(where, "prettier", "prettier"), "--write", "--ignore-unknown", file),
   },
   {
     name: "biome",
     extensions: exts(`${scriptExts} json jsonc css graphql gql`),
-    configuredIn: (dir) => anyExists(dir, ["biome.json", "biome.jsonc"]),
+    configuredIn: (dir) => firstExisting(dir, ["biome.json", "biome.jsonc"]),
     invocation: (file, where) => run(nodeTool(where, "@biomejs/biome", "biome"), "format", "--write", file),
   },
   {
     name: "ruff",
     extensions: exts("py pyi"),
-    configuredIn: (dir) => anyExists(dir, ["ruff.toml", ".ruff.toml"]) || pyprojectHasTool(dir, "ruff"),
+    configuredIn: (dir) => firstExisting(dir, ["ruff.toml", ".ruff.toml"]) ?? pyprojectTool(dir, "ruff"),
     invocation: (file, where) => run(pythonTool(where, "ruff"), "format", "--force-exclude", file),
   },
   {
     name: "black",
     extensions: exts("py pyi"),
-    configuredIn: (dir) => pyprojectHasTool(dir, "black"),
+    configuredIn: (dir) => pyprojectTool(dir, "black"),
     invocation: (file, where) => run(pythonTool(where, "black"), "--quiet", file),
   },
   {
     name: "gofmt",
     extensions: exts("go"),
-    configuredIn: (dir) => anyExists(dir, ["go.mod"]),
+    configuredIn: (dir) => firstExisting(dir, ["go.mod"]),
     invocation: (file) => ({ command: "gofmt", args: ["-w", file] }),
   },
   {
     name: "rustfmt",
     extensions: exts("rs"),
-    configuredIn: (dir) => anyExists(dir, ["rustfmt.toml", ".rustfmt.toml", "Cargo.toml"]),
+    configuredIn: (dir) => firstExisting(dir, ["rustfmt.toml", ".rustfmt.toml", "Cargo.toml"]),
     invocation: (file, where) => {
       const edition = rustEdition(where);
       return { command: "rustfmt", args: [...(edition ? ["--edition", edition] : []), file] };
@@ -191,7 +193,7 @@ const formatters: readonly Formatter[] = [
     name: "dprint",
     // dprint decides by its plugins; these are the file types its common plugins cover.
     extensions: exts(`${scriptExts} json jsonc json5 md markdown mdx toml css scss less sass html htm vue svelte astro yaml yml graphql gql`),
-    configuredIn: (dir) => anyExists(dir, ["dprint.json", ".dprint.json", "dprint.jsonc", ".dprint.jsonc"]),
+    configuredIn: (dir) => firstExisting(dir, ["dprint.json", ".dprint.json", "dprint.jsonc", ".dprint.jsonc"]),
     // dprint takes file patterns, so pass a forward-slash path relative to the config directory.
     invocation: (file, where, configDir) =>
       run(nodeTool(where, "dprint", "dprint"), "fmt", relative(configDir, file).split(sep).join("/")),
@@ -204,7 +206,7 @@ function detect(file: string, platform: NodeJS.Platform): Invocation | undefined
   if (candidates.length === 0) return undefined;
   const dirs = searchDirs(file);
   for (const dir of dirs) {
-    const formatter = candidates.find((candidate) => candidate.configuredIn(dir));
+    const formatter = candidates.find((candidate) => candidate.configuredIn(dir) !== undefined);
     if (formatter !== undefined) {
       return { ...formatter.invocation(file, { dirs, platform }, dir), cwd: dir, detected: formatter.name };
     }
@@ -240,6 +242,13 @@ export const formatOnEdit = defineHook({
     }),
   }),
   commandOptions: ["command"],
+  projectCommands(cwd, options) {
+    if (options.command !== undefined && options.command.length > 0) return [];
+    return formatters.flatMap((formatter) => {
+      const config = formatter.configuredIn(cwd);
+      return config === undefined ? [] : [`${formatter.name} (configured by ${config})`];
+    });
+  },
   defaults: {
     standard: { enabled: true, options: { timeoutMs: 10_000 } },
     strict: { enabled: true, options: { timeoutMs: 10_000 } },

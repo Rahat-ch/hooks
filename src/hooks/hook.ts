@@ -59,6 +59,12 @@ export interface Hook<Options = Record<string, never>> {
    */
   readonly commandOptions?: readonly (keyof Options & string)[];
   /**
+   * What this Hook would autodetect and run in the project at `cwd` with
+   * these options, one line each, for `hardhooks trust` to show before the
+   * user decides. Omit when the Hook autodetects nothing.
+   */
+  projectCommands?(cwd: string, options: Options): readonly string[];
+  /**
    * Enabled flag and a value for every option under each Preset. User and
    * repo config override these key by key (ADR-0002, #3).
    */

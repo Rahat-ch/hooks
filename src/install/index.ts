@@ -10,6 +10,7 @@ import { formatConfigError, loadConfig } from "../config/load";
 import type { Environment } from "../environment";
 import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
+import { untrustedNote } from "../trust/command";
 import { unifiedDiff } from "./diff";
 import { mergeEntries, wantedEntries, withoutHardhooks, type Entry, type JsonObject } from "./entries";
 
@@ -191,11 +192,13 @@ export async function init(request: InstallRequest): Promise<number> {
       `Note: ${bundle} is specific to this machine. To commit this file for a team, install hardhooks as a devDependency and re-run init.`,
     );
   }
-  return apply(request, path, (settings) => ({
+  const code = await apply(request, path, (settings) => ({
     next: mergeEntries(settings, entries, bundle),
     summary,
     unchanged: `${path} is already up to date.`,
   }));
+  for (const line of untrustedNote(env, hooks, loaded.config)) request.stdout(`${line}\n`);
+  return code;
 }
 
 /** `hardhooks uninstall`: remove every entry hardhooks wrote, and nothing else. */

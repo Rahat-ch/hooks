@@ -168,6 +168,10 @@ export const check = defineHook<CheckOptions>({
   failMode: "open",
   optionsSchema,
   commandOptions: ["command", "editCommand"],
+  projectCommands(cwd, options) {
+    const detected = options.command === undefined ? detectCommand(cwd) : undefined;
+    return detected ? [`\`${detected.command}\` (detected from ${detected.source})`] : [];
+  },
   defaults: {
     standard: { enabled: false, options: presetOptions },
     strict: { enabled: true, options: presetOptions },
