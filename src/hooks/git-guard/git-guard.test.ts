@@ -78,6 +78,39 @@ describe("git-guard", () => {
     });
   });
 
+  describe("sees into shell scripts and eval strings that hold unresolved variables", () => {
+    it.each([
+      ['bash -c "git push -f $R"', /force/i],
+      ['bash -c "git push origin $BRANCH --force"', /force/i],
+      ['sh -c "git reset --hard $REF"', /reset --hard/],
+      ['bash -c "git clean -fd $(cat dirs.txt)"', /clean/],
+      ['eval "git push -f $REMOTE"', /force/i],
+      ['eval git push --force "$REMOTE"', /force/i],
+      ['env bash -c "git push -f $R"', /force/i],
+      ['env -S "bash -c" "git push -f $R"', /force/i],
+      ['sudo sh -c "git reset --hard $REF"', /reset --hard/],
+      ['bash -c "cd $DIR && git push -f"', /force/i],
+      ['bash -c "bash -c \\"git push -f $R\\""', /force/i],
+      ['bash -c "eval \\"git push -f $R\\""', /force/i],
+      ['echo origin | xargs sh -c "git push -f $0 $R"', /force/i],
+      ["echo origin | xargs -I{} sh -c 'git push -f {}'", /force/i],
+      ["find . -maxdepth 0 -exec sh -c 'git push -f \"$1\"' _ {} \\;", /force/i],
+      ['find . -maxdepth 0 -exec sh -c "git reset --hard $REF" \\;', /reset --hard/],
+    ])("`%s`", async (command, reason) => {
+      expectBlocked(await runEvent(claudeCode.bash(command)), reason);
+    });
+
+    it.each([
+      'bash -c "git push origin $BRANCH"',
+      'sh -c "git status && echo $GIT_DIR"',
+      'eval "git log -n $N"',
+      'bash -c "echo \\"git push -f $R\\""',
+      'bash -c "git commit -m \\"$MSG: never git push --force\\""',
+    ])("allows `%s`", async (command) => {
+      expectNoDecision(await runEvent(claudeCode.bash(command)));
+    });
+  });
+
   it.each(["git push origin +main", "git push origin +HEAD:main", "git push origin feature +main:main"])(
     "blocks force-pushing a `+refspec`: `%s`",
     async (command) => {
@@ -212,6 +245,8 @@ describe("git-guard", () => {
     "bash -c 'git push \"unterminated'",
     "eval 'git push \"unterminated'",
     "if true; then git status",
+    'bash -c "if true; then git push origin $R"',
+    'eval "git push \\"$R"',
   ])("blocks `%s`, which it cannot parse, saying it couldn't be analysed", async (command) => {
     expectBlocked(await runEvent(claudeCode.bash(command)), /couldn't be analysed/);
   });

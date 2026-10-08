@@ -12,7 +12,7 @@
 import { readdirSync } from "node:fs";
 import { dirname, basename, resolve } from "node:path";
 import { hasGlob, shellSegmentRegex, type SecretMatch, type SecretsMatcher } from "../../secrets";
-import { analyzeShell, parseOptions, type SimpleCommand } from "../../shell";
+import { parseOptions, type SimpleCommand } from "../../shell";
 
 export interface ShellFinding {
   /** The argument or redirection target as written. */
@@ -224,39 +224,15 @@ function check(operand: string, cwd: string, matcher: SecretsMatcher): ShellFind
   return undefined;
 }
 
-const shells = new Set(["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash"]);
-/** How deep to look into shell scripts that `analyzeShell` left opaque. */
-const maxOpaqueDepth = 4;
-
-/**
- * `analyzeShell` can't see into `bash -c "...$VAR..."` (the script isn't
- * static), so analyse its text as written: unresolved expansions stay as
- * text, which is enough to spot `source .env` in `bash -c "source .env && echo $KEY"`.
- */
-function opaqueScripts(command: SimpleCommand, cwd: string, home: string): readonly SimpleCommand[] {
-  if (!shells.has(command.program) || !command.dynamic) return [];
-  return command.argv.slice(1).flatMap((arg) => {
-    if (arg.startsWith("-")) return [];
-    const analysis = analyzeShell(arg, { cwd, home });
-    return analysis.ok ? analysis.commands : [];
-  });
-}
-
 /** The first protected path the commands would read or write, if any. */
 export function shellFinding(
   commands: readonly SimpleCommand[],
   projectDir: string,
-  home: string,
   matcher: SecretsMatcher,
-  depth = 0,
 ): ShellFinding | undefined {
   for (const [index, command] of commands.entries()) {
     if (!command.executes) continue;
     const cwd = command.cwd ?? projectDir;
-    if (depth < maxOpaqueDepth) {
-      const finding = shellFinding(opaqueScripts(command, cwd, home), cwd, home, matcher, depth + 1);
-      if (finding) return finding;
-    }
     const operands = [
       ...command.redirections.map((r) => r.target),
       ...fileArguments(command),
