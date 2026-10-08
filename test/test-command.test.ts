@@ -217,7 +217,8 @@ describe("hardhooks test", () => {
       expect(onFeature.stdout).toMatch(/FAIL\s+branches\.json\s+no commits on main\n\s+decision: expected block, got none/);
       expect(onFeature.stdout).toMatch(/PASS\s+session\.json\s+session starts/);
       expect(repo.git("log", "--format=%s")).not.toMatch(/from hardhooks test/);
-    });
+      // Two full runs with real git for every git-asking fixture: about 5 s on a laptop.
+    }, 20_000);
   });
 
   it("never fails a shipped fixture just because the user configured a Hook's options", async () => {
