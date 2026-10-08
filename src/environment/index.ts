@@ -69,6 +69,19 @@ export function defaultStateDir(
   return join(env.XDG_STATE_HOME || join(home, ".local", "state"), "hardhooks");
 }
 
+/**
+ * The clock the CLI runs with: the real one, unless `HARDHOOKS_NOW` holds a
+ * date (ISO 8601, e.g. `2026-01-01T09:00:00Z`), which then stands still.
+ * A testing and debugging knob, so tests of the real CLI get a fixed "now"
+ * (the session-context date, notify's turn length, audit-log's day). An
+ * unparseable value is ignored.
+ */
+export function processClock(env: Readonly<Record<string, string | undefined>>): Clock {
+  const fixed = env.HARDHOOKS_NOW ? Date.parse(env.HARDHOOKS_NOW) : Number.NaN;
+  if (Number.isNaN(fixed)) return { now: () => new Date() };
+  return { now: () => new Date(fixed) };
+}
+
 /** The real Environment of the current process. Used only by the CLI wrapper. */
 export function nodeEnvironment(): Environment {
   const env = process.env;
@@ -78,7 +91,7 @@ export function nodeEnvironment(): Environment {
     home,
     env,
     platform: process.platform,
-    clock: { now: () => new Date() },
+    clock: processClock(env),
     processRunner: nodeProcessRunner,
     stateDir: defaultStateDir(process.platform, env, home),
   };
