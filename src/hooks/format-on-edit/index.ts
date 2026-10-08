@@ -4,7 +4,7 @@
  * never blocks, adds no context; any failure means the file is left as is.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, extname, join, resolve } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import type { Environment } from "../../environment";
 import { defineHook } from "../hook";
 
@@ -26,8 +26,8 @@ interface Formatter {
   extensions: ReadonlySet<string>;
   /** Whether `dir` holds this formatter's project config. */
   configuredIn(dir: string): boolean;
-  /** How to format `file`. */
-  invocation(file: string, where: Where): Omit<Invocation, "cwd">;
+  /** How to format `file`, run from `configDir` (where its config was found). */
+  invocation(file: string, where: Where, configDir: string): Omit<Invocation, "cwd">;
 }
 
 /** Where to look for project-local binaries. */
@@ -109,7 +109,17 @@ function pythonTool({ dirs, platform }: Where, bin: string): Program {
   return { command: bin, prefix: [] };
 }
 
-const exts = (...list: string[]) => new Set(list.map((ext) => `.${ext}`));
+/** The `edition` in the nearest Cargo.toml, which rustfmt (unlike cargo fmt) does not read itself. */
+function rustEdition({ dirs }: Where): string | undefined {
+  for (const dir of dirs) {
+    const manifest = readText(join(dir, "Cargo.toml"));
+    if (manifest !== undefined) return /^\s*edition\s*=\s*["'](\d{4})["']/m.exec(manifest)?.[1];
+  }
+  return undefined;
+}
+
+const exts = (list: string) => new Set(list.split(" ").map((ext) => `.${ext}`));
+const scriptExts = "js jsx mjs cjs ts tsx mts cts";
 
 const prettierConfigs = [
   ".prettierrc",
@@ -119,21 +129,51 @@ const prettierConfigs = [
 
 const run = (program: Program, ...args: string[]) => ({ command: program.command, args: [...program.prefix, ...args] });
 
-/** Checked in this order within each directory, nearest directory first. */
+/**
+ * Checked in this order within each directory, nearest directory first, so the
+ * config nearest the file wins and ties go to the earlier formatter.
+ */
 const formatters: readonly Formatter[] = [
   {
-    extensions: exts(
-      ..."js jsx mjs cjs ts tsx mts cts json json5 jsonc css scss less html htm vue md markdown mdx yaml yml graphql gql hbs handlebars".split(
-        " ",
-      ),
-    ),
+    extensions: exts(`${scriptExts} json json5 jsonc css scss less html htm vue md markdown mdx yaml yml graphql gql hbs handlebars`),
     configuredIn: (dir) => anyExists(dir, prettierConfigs) || readJson(join(dir, "package.json"))?.prettier !== undefined,
     invocation: (file, where) => run(nodeTool(where, "prettier", "prettier"), "--write", "--ignore-unknown", file),
   },
   {
-    extensions: exts("py", "pyi"),
+    extensions: exts(`${scriptExts} json jsonc css graphql gql`),
+    configuredIn: (dir) => anyExists(dir, ["biome.json", "biome.jsonc"]),
+    invocation: (file, where) => run(nodeTool(where, "@biomejs/biome", "biome"), "format", "--write", file),
+  },
+  {
+    extensions: exts("py pyi"),
     configuredIn: (dir) => anyExists(dir, ["ruff.toml", ".ruff.toml"]) || pyprojectHasTool(dir, "ruff"),
     invocation: (file, where) => run(pythonTool(where, "ruff"), "format", "--force-exclude", file),
+  },
+  {
+    extensions: exts("py pyi"),
+    configuredIn: (dir) => pyprojectHasTool(dir, "black"),
+    invocation: (file, where) => run(pythonTool(where, "black"), "--quiet", file),
+  },
+  {
+    extensions: exts("go"),
+    configuredIn: (dir) => anyExists(dir, ["go.mod"]),
+    invocation: (file) => ({ command: "gofmt", args: ["-w", file] }),
+  },
+  {
+    extensions: exts("rs"),
+    configuredIn: (dir) => anyExists(dir, ["rustfmt.toml", ".rustfmt.toml", "Cargo.toml"]),
+    invocation: (file, where) => {
+      const edition = rustEdition(where);
+      return { command: "rustfmt", args: [...(edition ? ["--edition", edition] : []), file] };
+    },
+  },
+  {
+    // dprint decides by its plugins; these are the file types its common plugins cover.
+    extensions: exts(`${scriptExts} json jsonc json5 md markdown mdx toml css scss less sass html htm vue svelte astro yaml yml graphql gql`),
+    configuredIn: (dir) => anyExists(dir, ["dprint.json", ".dprint.json", "dprint.jsonc", ".dprint.jsonc"]),
+    // dprint takes file patterns, so pass a forward-slash path relative to the config directory.
+    invocation: (file, where, configDir) =>
+      run(nodeTool(where, "dprint", "dprint"), "fmt", relative(configDir, file).split(sep).join("/")),
   },
 ];
 
@@ -144,7 +184,7 @@ function detect(file: string, platform: NodeJS.Platform): Invocation | undefined
   const dirs = searchDirs(file);
   for (const dir of dirs) {
     const formatter = candidates.find((candidate) => candidate.configuredIn(dir));
-    if (formatter !== undefined) return { ...formatter.invocation(file, { dirs, platform }), cwd: dir };
+    if (formatter !== undefined) return { ...formatter.invocation(file, { dirs, platform }, dir), cwd: dir };
   }
   return undefined;
 }

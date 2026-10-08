@@ -89,6 +89,75 @@ describe("format-on-edit", () => {
     expect(runner.runs[0]!.args).toContain("format");
   });
 
+  describe("detects the formatter from project config", () => {
+    it.each<{ formatter: string; config: Record<string, string>; file: string; args: string[] }>([
+      { formatter: "biome", config: { "biome.json": "{}" }, file: "src/a.ts", args: ["format", "--write"] },
+      { formatter: "biome", config: { "biome.jsonc": "{}" }, file: "data.json", args: ["format", "--write"] },
+      { formatter: "prettier", config: { ".prettierrc.yaml": "semi: false\n" }, file: "README.md", args: ["--write"] },
+      { formatter: "prettier", config: { "prettier.config.mjs": "export default {}\n" }, file: "a.css", args: ["--write"] },
+      { formatter: "dprint", config: { "dprint.json": "{}" }, file: "src/a.ts", args: ["fmt"] },
+      { formatter: "dprint", config: { ".dprint.jsonc": "{}" }, file: "Cargo.toml", args: ["fmt"] },
+      { formatter: "ruff", config: { ".ruff.toml": "" }, file: "a.pyi", args: ["format"] },
+      { formatter: "black", config: { "pyproject.toml": "[tool.black]\nline-length = 88\n" }, file: "a.py", args: [] },
+      { formatter: "gofmt", config: { "go.mod": "module example.com/demo\n" }, file: "cmd/main.go", args: ["-w"] },
+      { formatter: "rustfmt", config: { "Cargo.toml": "[package]\nname = 'demo'\n" }, file: "src/main.rs", args: [] },
+      { formatter: "rustfmt", config: { "rustfmt.toml": "" }, file: "lib.rs", args: [] },
+    ])("$formatter for $file with $config", async ({ formatter, config, file, args }) => {
+      const runner = fakeFormatter(formatter, "formatted\n");
+      const env = project({ ...config, [file]: "unformatted\n" }, { processRunner: runner });
+      const path = join(env.cwd, file);
+
+      expectNoDecision(await runEvent(writePayload(path), { env }));
+
+      expect(runner.runs.map((r) => r.command)).toEqual([formatter]);
+      expect(runner.runs[0]!.args).toEqual(expect.arrayContaining(args));
+      expect(read(path)).toBe("formatted\n");
+    });
+
+    it("passes the Rust edition from Cargo.toml, as cargo fmt would", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ "Cargo.toml": '[package]\nname = "demo"\nedition = "2021"\n', "src/lib.rs": "" }, { processRunner: runner });
+
+      await runEvent(writePayload(join(env.cwd, "src", "lib.rs")), { env });
+
+      expect(runner.runs[0]!.args).toEqual(expect.arrayContaining(["--edition", "2021"]));
+    });
+
+    it("prefers ruff over black when pyproject.toml configures both", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ "pyproject.toml": "[tool.black]\n\n[tool.ruff.lint]\nselect = ['E']\n", "a.py": "" }, { processRunner: runner });
+
+      await runEvent(writePayload(join(env.cwd, "a.py")), { env });
+
+      expect(runner.runs.map((r) => r.command)).toEqual(["ruff"]);
+    });
+
+    it("uses the config nearest the edited file", async () => {
+      const runner = recordingProcessRunner();
+      const env = project(
+        { ".prettierrc": "{}", "packages/app/biome.json": "{}", "packages/app/src/a.ts": "", "packages/lib/b.ts": "" },
+        { processRunner: runner },
+      );
+
+      await runEvent(writePayload(join(env.cwd, "packages", "app", "src", "a.ts")), { env });
+      await runEvent(writePayload(join(env.cwd, "packages", "lib", "b.ts")), { env });
+
+      expect(runner.runs.map((r) => [r.command, r.options.cwd])).toEqual([
+        ["biome", join(env.cwd, "packages", "app")],
+        ["prettier", env.cwd],
+      ]);
+    });
+
+    it("does not look above the repository root", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ "repo/.git/HEAD": "", "repo/a.ts": "" }, { processRunner: runner });
+      write(join(env.cwd, ".prettierrc"), "{}");
+
+      expectNoDecision(await runEvent(writePayload(join(env.cwd, "repo", "a.ts")), { env }));
+      expect(runner.runs).toEqual([]);
+    });
+  });
+
   describe("stays silent and leaves the file alone", () => {
     it("when the project configures no formatter", async () => {
       const runner = recordingProcessRunner();
