@@ -2,5 +2,6 @@ export * from "./config";
 export * from "./decisions";
 export * from "./environment";
 export * from "./fixtures";
+export * from "./install";
 export * from "./payloads";
 export * from "./run";
