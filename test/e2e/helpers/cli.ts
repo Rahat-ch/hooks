@@ -24,6 +24,8 @@ export interface CliOptions {
   env: Env;
   /** Kill the child and fail after this long. Default 20 s. */
   timeoutMs?: number;
+  /** Run this copy of the bundle instead (e.g. one copied into a project's node_modules). Default: the built bundle. */
+  bundle?: string;
 }
 
 /** The bundle under test, built once per run by the e2e globalSetup. */
@@ -37,7 +39,8 @@ export function bundlePath(): string {
  * exits; rejects if it can't start or outlives `timeoutMs`.
  */
 export function hardhooks(args: readonly string[], options: CliOptions): Promise<CliResult> {
-  const { node, bundle } = inject("hardhooksE2E");
+  const { node } = inject("hardhooksE2E");
+  const bundle = options.bundle ?? inject("hardhooksE2E").bundle;
   const env = Object.fromEntries(Object.entries(options.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
   const timeoutMs = options.timeoutMs ?? 20_000;
   return new Promise((resolve, reject) => {
