@@ -5,6 +5,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import * as s from "../../config/schema";
 import type { Environment } from "../../environment";
 import { defineHook } from "../hook";
 
@@ -189,24 +190,52 @@ function detect(file: string, platform: NodeJS.Platform): Invocation | undefined
   return undefined;
 }
 
+/** The user's own `command`, with `{file}` replaced by (or else followed by) the edited file. */
+function configured([command, ...args]: readonly string[], file: string, cwd: string): Invocation {
+  const withFile = args.includes("{file}") ? args.map((arg) => (arg === "{file}" ? file : arg)) : [...args, file];
+  return { command: command!, args: withFile, cwd };
+}
+
 export const formatOnEdit = defineHook({
   name: "format-on-edit",
   description: "Formats each file the Host edits or writes with the project's own formatter.",
   events: ["PostToolUse"],
   tools: ["edit", "write"],
   failMode: "open",
+  optionsSchema: s.object({
+    command: s.optional(
+      s.array(s.string(), {
+        description:
+          'Format every edited file with this command instead of detecting a formatter, e.g. ["black", "--quiet", "{file}"]. ' +
+          "Run without a shell from the project directory; `{file}` is replaced by the edited file's absolute path, which is appended when absent. " +
+          "On Windows name an executable (.exe), not a .cmd/.bat shim.",
+      }),
+    ),
+    timeoutMs: s.number({
+      integer: true,
+      minimum: 1,
+      description: "Give up on the formatter after this many milliseconds, leaving the file as it is.",
+    }),
+  }),
   defaults: {
-    standard: { enabled: true, options: {} },
-    strict: { enabled: true, options: {} },
+    standard: { enabled: true, options: { timeoutMs: 10_000 } },
+    strict: { enabled: true, options: { timeoutMs: 10_000 } },
   },
-  async run(event, _options, env: Environment) {
+  async run(event, options, env: Environment) {
     const filePath = event.tool?.filePath;
     if (filePath === undefined) return undefined;
     const file = resolve(event.cwd, filePath);
     if (!exists(file)) return undefined;
-    const invocation = detect(file, env.platform);
+    const invocation =
+      options.command !== undefined && options.command.length > 0
+        ? configured(options.command, file, event.cwd)
+        : detect(file, env.platform);
     if (invocation === undefined) return undefined;
-    await env.processRunner.run(invocation.command, invocation.args, { cwd: invocation.cwd, timeoutMs: 10_000 });
+    // Whatever happens (non-zero exit, timeout, not installed), the file is simply left as it is.
+    await env.processRunner.run(invocation.command, invocation.args, {
+      cwd: invocation.cwd,
+      timeoutMs: options.timeoutMs,
+    });
     return undefined;
   },
 });

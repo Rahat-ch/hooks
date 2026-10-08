@@ -9,6 +9,7 @@ import {
   fakeEnvironment,
   recordingProcessRunner,
   runEvent,
+  writeRepoConfig,
   type FakeEnvironmentOptions,
 } from "../../../test/helpers";
 
@@ -154,6 +155,79 @@ describe("format-on-edit", () => {
       write(join(env.cwd, ".prettierrc"), "{}");
 
       expectNoDecision(await runEvent(writePayload(join(env.cwd, "repo", "a.ts")), { env }));
+      expect(runner.runs).toEqual([]);
+    });
+  });
+
+  describe("options", () => {
+    it("`command` replaces detection, with `{file}` standing for the edited file", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ ".prettierrc": "{}", "src/a.ts": "" }, { processRunner: runner });
+      writeRepoConfig(env, { hooks: { "format-on-edit": { command: ["fmt", "--in-place", "{file}", "--quiet"] } } });
+      const file = join(env.cwd, "src", "a.ts");
+
+      expectNoDecision(await runEvent(writePayload(file), { env }));
+
+      expect(runner.runs.map(({ command, args, options }) => ({ command, args, cwd: options.cwd }))).toEqual([
+        { command: "fmt", args: ["--in-place", file, "--quiet"], cwd: env.cwd },
+      ]);
+    });
+
+    it("`command` without `{file}` gets the edited file appended, whatever its type", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ "notes.txt": "" }, { processRunner: runner });
+      writeRepoConfig(env, { hooks: { "format-on-edit": { command: ["fmt"] } } });
+
+      await runEvent(writePayload(join(env.cwd, "notes.txt")), { env });
+
+      expect(runner.runs.map((r) => [r.command, ...r.args])).toEqual([["fmt", join(env.cwd, "notes.txt")]]);
+    });
+
+    it("`timeoutMs` bounds a hung formatter, which is then ignored", { timeout: 20_000 }, async () => {
+      const env = project({ "a.ts": "const  a=1\n" }, { processRunner: "real" });
+      writeRepoConfig(env, {
+        hooks: { "format-on-edit": { command: ["node", "-e", "setTimeout(() => {}, 15000)"], timeoutMs: 300 } },
+      });
+      const started = Date.now();
+
+      const result = await runEvent(writePayload(join(env.cwd, "a.ts")), { env });
+
+      expectNoDecision(result);
+      expect(result.stderr).toBe("");
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(read(join(env.cwd, "a.ts"))).toBe("const  a=1\n");
+    });
+
+    it("`timeoutMs` holds even when the formatter's own child process keeps running", { timeout: 20_000 }, async () => {
+      // Like the biome and dprint npm wrappers: node starts the real binary, which inherits stdout/stderr.
+      const wrapper =
+        "require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], " +
+        "{ stdio: 'inherit', cwd: require('os').tmpdir() }); setTimeout(() => {}, 15000)";
+      const env = project({ "a.ts": "" }, { processRunner: "real" });
+      writeRepoConfig(env, { hooks: { "format-on-edit": { command: ["node", "-e", wrapper], timeoutMs: 300 } } });
+      const started = Date.now();
+
+      expectNoDecision(await runEvent(writePayload(join(env.cwd, "a.ts")), { env }));
+      expect(Date.now() - started).toBeLessThan(3_000);
+    });
+
+    it("a `command` that cannot be started is ignored quietly", async () => {
+      // Node refuses this synchronously, as it does Windows .cmd shims run without a shell.
+      const env = project({ "a.ts": "" }, { processRunner: "real" });
+      writeRepoConfig(env, { hooks: { "format-on-edit": { command: ["fmt\u0000"] } } });
+
+      const result = await runEvent(writePayload(join(env.cwd, "a.ts")), { env });
+
+      expectNoDecision(result);
+      expect(result.stderr).toBe("");
+    });
+
+    it("can be turned off", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ ".prettierrc": "{}", "a.ts": "" }, { processRunner: runner });
+      writeRepoConfig(env, { hooks: { "format-on-edit": { enabled: false } } });
+
+      expectNoDecision(await runEvent(writePayload(join(env.cwd, "a.ts")), { env }));
       expect(runner.runs).toEqual([]);
     });
   });
