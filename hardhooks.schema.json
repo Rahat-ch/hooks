@@ -30,6 +30,17 @@
             }
           },
           "additionalProperties": false
+        },
+        "session-context": {
+          "description": "Tells the Host the date, git branch, dirty files and recent commits when a session starts or compacts.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
