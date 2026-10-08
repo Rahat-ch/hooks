@@ -1,0 +1,30 @@
+[
+  {
+    "name": "force-push to main is blocked",
+    "bash": "git push --force origin main",
+    "expect": "block"
+  },
+  {
+    "name": "force-push hidden in bash -c is blocked, saying why",
+    "event": "PreToolUse",
+    "tool": "Bash",
+    "input": { "command": "bash -c 'git push -f origin main'" },
+    "expect": { "decision": "block", "reason": "force" }
+  },
+  {
+    "name": "--force-with-lease asks first",
+    "bash": "git push --force-with-lease origin feature",
+    "expect": "ask"
+  },
+  {
+    "name": "a commit message about force-pushing is fine",
+    "bash": "git commit -m 'docs: never git push --force'",
+    "expect": "allow"
+  },
+  {
+    "name": "sessions start with today's date",
+    "event": "SessionStart",
+    "payload": { "source": "startup" },
+    "expect": { "context": "Today: \\d{4}-\\d{2}-\\d{2}" }
+  }
+]

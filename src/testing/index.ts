@@ -15,13 +15,11 @@ import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
 import { parseCaseFile, type TestCase } from "./cases";
 import type { FixtureFile } from "./fixture-files";
+import { installWarnings } from "./install-check";
 import { judge, type Verdict } from "./observe";
 import { sandboxProcessRunner } from "./sandbox";
 import { shippedFixtureFiles } from "./shipped";
-import { installWarnings } from "./install-check";
 import { loadUserCases } from "./user-cases";
-
-export { defaultCasesDir } from "./user-cases";
 
 export interface TestRequest {
   env: Environment;

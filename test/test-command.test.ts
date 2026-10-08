@@ -5,6 +5,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Environment } from "../src/environment";
 import { defineHook, type Hook } from "../src/hooks/hook";
@@ -377,6 +378,14 @@ describe("hardhooks test", () => {
       const result = await runTestCommand({ env, cases: join("ci", "hooks") });
       expect(result.stdout).toMatch(/PASS\s+a\.json\s+status is fine/);
       expect(result.stdout).toMatch(/PASS\s+b\.json\s+reset --hard is blocked/);
+      expect(result.exitCode, result.stdout).toBe(0);
+    });
+
+    it("passes the example case file shipped in examples/tests/", async () => {
+      const example = fileURLToPath(new URL("../examples/tests/git.json", import.meta.url));
+      const result = await runTestCommand({ cases: example });
+      expect(result.stdout).toMatch(/PASS\s+git\.json\s+force-push to main is blocked/);
+      expect(result.stdout).not.toMatch(/FAIL/);
       expect(result.exitCode, result.stdout).toBe(0);
     });
 
