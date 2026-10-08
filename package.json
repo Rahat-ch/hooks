@@ -3,6 +3,23 @@
   "version": "0.0.0",
   "description": "Deterministic guardrails for nondeterministic agents: tested, configurable hooks for AI coding agents.",
   "license": "MIT",
+  "author": "Rahat Chowdhury (https://github.com/Rahat-ch)",
+  "homepage": "https://github.com/Rahat-ch/hooks#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rahat-ch/hooks.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Rahat-ch/hooks/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "guardrails",
+    "ai-agents",
+    "git",
+    "security"
+  ],
   "type": "module",
   "bin": {
     "hardhooks": "dist/hardhooks.mjs"
@@ -25,15 +42,13 @@
     "schema": "vitest run test/schema.test.ts --project unit --update",
     "check": "npm run typecheck && npm test && npm run test:smoke"
   },
-  "dependencies": {
-    "unbash": "5.0.0"
-  },
   "devDependencies": {
     "@types/node": "20.19.43",
     "ajv": "8.20.0",
     "prettier": "3.6.2",
     "tsup": "8.5.1",
     "typescript": "7.0.2",
+    "unbash": "5.0.0",
     "vitest": "4.1.11"
   }
 }

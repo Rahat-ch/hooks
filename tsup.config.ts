@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { defineConfig, type Options } from "tsup";
 import { collectFixtureFiles } from "./src/testing/fixture-files";
@@ -27,8 +28,22 @@ const inlineShippedFixtures: Plugin = {
   },
 };
 
+/**
+ * Licence notices of the packages bundled into dist/hardhooks.mjs. They are
+ * devDependencies, so their LICENSE files are not installed with hardhooks;
+ * their notices (which ISC and MIT require in all copies) travel at the top of
+ * the bundle instead, wherever it is copied.
+ */
+const bundledNotices = ["unbash"]
+  .map((name) => {
+    const lines = readFileSync(join("node_modules", name, "LICENSE"), "utf8").trim().split(/\r?\n/);
+    return [`/*! Bundled: ${name}`, " *", ...lines.map((line) => (line ? ` * ${line}` : " *")), " */"].join("\n");
+  })
+  .join("\n");
+
 // One self-contained ESM file run with `node` (ADR-0001). `unbash` is bundled
-// in, so the published package has no runtime dependencies to install.
+// in, so the published package has no runtime dependencies to install, and
+// unbash is a devDependency.
 export default defineConfig({
   entry: { hardhooks: "src/cli.ts" },
   format: ["esm"],
@@ -44,6 +59,6 @@ export default defineConfig({
   minify: false,
   clean: true,
   dts: false,
-  banner: { js: "#!/usr/bin/env node" },
+  banner: { js: `#!/usr/bin/env node\n${bundledNotices}` },
   esbuildPlugins: [inlineShippedFixtures],
 });

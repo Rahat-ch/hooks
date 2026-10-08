@@ -1,0 +1,215 @@
+# Publishes hardhooks to npm when a version tag (v0.1.0, v0.2.0-rc.1, ...) is
+# pushed. Human steps (npm trusted publisher, first publish, tagging) are in
+# docs/releasing.md.
+#
+#   version ─► ci (ci.yml: 3 OS × Node 20/22/24, packed-plugin validation)
+#           ─► publish (the exact tarball CI validated, provenance)
+#           ─► verify (npm i -g on 3 OSes, init --dry-run, test; $schema URL)
+#           ─► github-release
+#
+# Authentication: npm trusted publishing (OIDC, `id-token: write`), which npm
+# recommends over long-lived tokens ("When trusted publishing is available for
+# your workflow, always prefer it over long-lived tokens",
+# https://docs.npmjs.com/trusted-publishers). npm tries OIDC first and falls
+# back to a token, so an `NPM_TOKEN` secret (in the `npm` environment) can do
+# the very first publish, before a trusted publisher can be configured for the
+# package; delete it afterwards.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Tag matches package versions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: check
+        name: Check tag, package.json, package-lock.json and plugin.json agree
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag $TAG is not v<semver>"
+            exit 1
+          fi
+          package=$(node -p 'require("./package.json").version')
+          lock=$(node -p 'require("./package-lock.json").version')
+          plugin=$(node -p 'require("./.claude-plugin/plugin.json").version')
+          status=0
+          for pair in "package.json:$package" "package-lock.json:$lock" ".claude-plugin/plugin.json:$plugin"; do
+            if [ "${pair#*:}" != "$version" ]; then
+              echo "::error file=${pair%%:*}::version is ${pair#*:}, but the tag is $TAG"
+              status=1
+            fi
+          done
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG ($GITHUB_SHA) is not on main"
+            status=1
+          fi
+          [ "$status" -eq 0 ] || exit 1
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: Publish to npm
+    needs: [version, ci]
+    runs-on: ubuntu-latest
+    # Holds the bootstrap NPM_TOKEN secret, and lets the repo add a required
+    # reviewer before anything is published. Must match the trusted
+    # publisher's environment on npmjs.com if one is set there.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm >= 11.5.1 (trusted publishing)
+        run: |
+          if ! node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$(npm --version)"; then
+            npm install -g npm@11
+          fi
+          npm --version
+      - uses: actions/download-artifact@v8
+        with:
+          name: hardhooks-plugin
+          path: release
+      - name: Check the tarball CI validated is this version
+        run: |
+          ls -l release
+          test -f "release/hardhooks-$VERSION.tgz"
+      - name: npm publish
+        env:
+          # Empty unless the bootstrap secret exists; OIDC is tried first.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          tag=latest
+          if [ "$PRERELEASE" = "true" ]; then tag=next; fi
+          npm publish "release/hardhooks-$VERSION.tgz" --access public --provenance --tag "$tag"
+
+  verify:
+    name: Install from npm / ${{ matrix.os }}
+    needs: [version, publish]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          # The oldest supported Node, on a clean machine (no checkout).
+          node-version: 20
+      - name: npm i -g hardhooks@${{ env.VERSION }}
+        run: |
+          # The registry can take a moment to serve a new version.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            npm i -g "hardhooks@$VERSION" && exit 0
+            echo "attempt $attempt failed; retrying in 30s"
+            sleep 30
+          done
+          exit 1
+      - name: hardhooks init --dry-run and hardhooks test
+        run: |
+          project="$RUNNER_TEMP/project"
+          mkdir -p "$project"
+          cd "$project"
+          git init -q
+          hardhooks --help
+          hardhooks init --dry-run
+          hardhooks test
+
+  schema:
+    name: $schema URL resolves
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fetch the schema from unpkg and compare with the repo's
+        run: |
+          # The unversioned URL (what .hardhooks.json files use) follows the
+          # `latest` dist-tag, so check it only for a non-prerelease.
+          urls=("https://unpkg.com/hardhooks@$VERSION/hardhooks.schema.json")
+          if [ "$PRERELEASE" != "true" ]; then
+            # shellcheck disable=SC2016 # `$id` is the schema's JSON key
+            urls+=("$(node -p 'require("./hardhooks.schema.json").$id')")
+          fi
+          for url in "${urls[@]}"; do
+            ok=false
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -fsSL "$url" -o fetched.json && node -e '
+                const { isDeepStrictEqual } = require("node:util");
+                const fs = require("node:fs");
+                const read = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
+                process.exit(isDeepStrictEqual(read("fetched.json"), read("hardhooks.schema.json")) ? 0 : 1);
+              '; then
+                ok=true
+                break
+              fi
+              echo "$url: not serving this version's schema yet (attempt $attempt); retrying in 30s"
+              sleep 30
+            done
+            [ "$ok" = true ] || { echo "::error::$url does not serve hardhooks.schema.json from $VERSION"; exit 1; }
+            echo "$url OK"
+          done
+
+  github-release:
+    name: GitHub release
+    needs: [version, verify, schema]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: hardhooks-plugin
+          path: release
+      - name: Create the release with generated notes and the npm tarball
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          notes="Install: \`npm i -g hardhooks@$VERSION && hardhooks init\` (https://www.npmjs.com/package/hardhooks/v/$VERSION), or the Claude Code plugin: \`claude plugin marketplace add $GH_REPO\` then \`claude plugin install hardhooks@hardhooks\`. Use one or the other, not both."
+          gh release create "$TAG" "release/hardhooks-$VERSION.tgz" \
+            --verify-tag --title "$TAG" --notes "$notes" --generate-notes "${flags[@]}"

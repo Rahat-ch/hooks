@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs this whole file before publishing, then
+  # publishes the `hardhooks-plugin` tarball the plugin job uploads.
+  workflow_call:
 
 permissions:
   contents: read
@@ -37,7 +40,7 @@ jobs:
   plugin:
     # The marketplace installs the plugin from the npm package (`npm` plugin
     # source), so validate the packed tarball users get, not the repo root.
-    # The release workflow (#16) publishes this same tarball to npm.
+    # The release workflow (release.yml) publishes this same tarball to npm.
     name: Claude Code plugin
     runs-on: ubuntu-latest
     env:
