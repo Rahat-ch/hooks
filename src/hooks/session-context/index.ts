@@ -2,7 +2,7 @@
  * session-context (fails open): at SessionStart, every source including
  * compact, tells the Host where it is: today's date and, in a git repo, the
  * branch, ahead/behind, dirty files and recent commits, then any configured
- * extra files. The whole context is hard-capped at `budgetBytes`, because it
+ * extra files and command output. The whole context is hard-capped at `budgetBytes`, because it
  * stays in the conversation and is re-added after every compaction.
  */
 import { open } from "node:fs/promises";
