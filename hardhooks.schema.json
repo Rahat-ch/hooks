@@ -20,6 +20,27 @@
       "description": "Per-Hook overrides: `enabled` plus that Hook's options. Anything left out comes from the Preset.",
       "type": "object",
       "properties": {
+        "audit-log": {
+          "description": "Log every Event, tool input and each Hook's Decision and timing as JSONL in the user state directory.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "maxOutputBytes": {
+              "description": "Keep at most this many bytes of a tool's output (and of its input, except the command and path) per entry.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "retentionDays": {
+              "description": "Delete day files older than this many days (checked on each project's first entry of the day).",
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
         "block-destructive-shell": {
           "description": "Blocks recursive deletes of root, home or outside the project, disk formatting, raw device writes and piping downloads into a shell.",
           "type": "object",

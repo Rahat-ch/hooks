@@ -163,7 +163,8 @@ const eventFields: Partial<Record<EventName, Json>> = {
   SessionEnd: { reason: "other" },
 };
 
-const commonKeys = ["name", "description", "event", "host", "cwd", "tool", "input", ...Object.keys(shorthands), "payload", "expect"];
+/** `audit` holds an audit-log entry's record (Hook Decisions, timing); ignored, so log lines load as cases. */
+const commonKeys = ["name", "description", "event", "host", "cwd", "tool", "input", ...Object.keys(shorthands), "payload", "expect", "audit"];
 const knownKeys: Record<CaseKind, readonly string[]> = {
   fixture: [...commonKeys, "assumes"],
   case: commonKeys,

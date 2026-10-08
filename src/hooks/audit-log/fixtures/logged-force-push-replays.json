@@ -1,0 +1,34 @@
+{
+  "name": "PreToolUse Bash at 2026-01-01T09:00:00.000Z",
+  "event": "PreToolUse",
+  "host": "claude-code",
+  "payload": {
+    "session_id": "fixture-session",
+    "transcript_path": "/home/user/.claude/projects/demo/transcript.jsonl",
+    "cwd": "/home/user/demo",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": { "command": "git push --force https://[REDACTED]@github.com/demo/demo main", "description": "Force push" },
+    "tool_use_id": "toolu_fixture"
+  },
+  "expect": { "decision": "block" },
+  "audit": {
+    "time": "2026-01-01T09:00:00.000Z",
+    "project": "/home/user/demo",
+    "session": "fixture-session",
+    "tool": "Bash",
+    "ms": 2.1,
+    "hooks": [
+      { "hook": "block-destructive-shell", "decision": "none", "ms": 0.6 },
+      {
+        "hook": "git-guard",
+        "decision": "block",
+        "reason": "`git push --force` rewrites history on the remote and can destroy other people's commits. Push without force, or ask the user to force-push themselves.\nPushing to protected branch `main` is blocked. Push a feature branch and open a pull request instead.",
+        "ms": 0.9
+      },
+      { "hook": "protect-secrets", "decision": "none", "ms": 0.3 }
+    ]
+  },
+  "assumes": { "preset": "strict" }
+}

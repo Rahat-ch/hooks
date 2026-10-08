@@ -1,5 +1,6 @@
 /**
- * Finding and parsing the user's case files: every `*.json` in
+ * Finding and parsing the user's case files: every `*.json` (or `*.jsonl`, one
+ * case per line, such as an audit-log day file) in
  * `.hardhooks/tests/` at the project root, or the file or directory given
  * with `--cases <path>`.
  */
@@ -27,7 +28,7 @@ export function loadUserCases(env: Environment, casesPath: string | undefined): 
   try {
     files = statSync(path).isDirectory()
       ? readdirSync(path)
-          .filter((name) => name.endsWith(".json"))
+          .filter((name) => name.endsWith(".json") || name.endsWith(".jsonl"))
           .sort()
           .map((name) => join(path, name))
       : [path];
@@ -48,6 +49,8 @@ export function loadUserCases(env: Environment, casesPath: string | undefined): 
       errors.push(`${source}: ${(error as Error).message}`);
       continue;
     }
+    // A `.jsonl` file (an audit-log day file) holds one case per line.
+    if (file.endsWith(".jsonl")) text = `[${text.split(/\r?\n/).filter((line) => line.trim() !== "").join(",")}]`;
     // Built payloads run in the project root, so cases mean the same wherever the command runs.
     const parsed = parseCaseFile(text, source, { kind: "case", cwd: root });
     if (parsed.ok) cases.push(...parsed.cases);
