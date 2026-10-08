@@ -12,8 +12,11 @@ export interface ObservedDecision {
   context?: string;
   /** A terminal escape sequence (e.g. an OSC 9 notification) the Host writes to its terminal for us. */
   terminalSequence?: string;
-  /** A message shown to the user (`systemMessage`), e.g. a warning. */
-  warning?: string;
+  /**
+   * Shown to the user only (Claude Code's `systemMessage`), never to the model:
+   * Hooks' messages and the dispatcher's warnings, joined.
+   */
+  message?: string;
 }
 
 export function observe(result: HostResult): ObservedDecision {
@@ -44,7 +47,7 @@ export function observe(result: HostResult): ObservedDecision {
   }
   if (specific.additionalContext !== undefined) observed.context = specific.additionalContext;
   if (out.terminalSequence !== undefined) observed.terminalSequence = out.terminalSequence;
-  if (out.systemMessage !== undefined) observed.warning = out.systemMessage;
+  if (out.systemMessage !== undefined) observed.message = out.systemMessage;
   return observed;
 }
 
@@ -56,8 +59,8 @@ export function expectAllowedWithWarning(result: HostResult, warning?: RegExp): 
   expect(result.exitCode, result.stderr).toBe(0);
   const observed = observe(result);
   expect(observed.decision, result.stdout).toBe("none");
-  expect(observed.warning, result.stdout).toBeTruthy();
-  if (warning) expect(observed.warning).toMatch(warning);
+  expect(observed.message, result.stdout).toBeTruthy();
+  if (warning) expect(observed.message).toMatch(warning);
   return observed;
 }
 
@@ -89,5 +92,13 @@ export function expectContext(result: HostResult, context: RegExp): ObservedDeci
   expect(result.exitCode, result.stderr).toBe(0);
   const observed = observe(result);
   expect(observed.context).toMatch(context);
+  return observed;
+}
+
+/** The user sees a message (`systemMessage`) matching `message`. */
+export function expectMessage(result: HostResult, message: RegExp): ObservedDecision {
+  expect(result.exitCode, result.stderr).toBe(0);
+  const observed = observe(result);
+  expect(observed.message, result.stdout).toMatch(message);
   return observed;
 }

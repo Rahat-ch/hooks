@@ -108,6 +108,7 @@ const contextEvents = new Set<string>([
 export function renderClaudeCodeOutput(eventName: string, outcome: Outcome): string {
   const out: Record<string, unknown> = {};
   const specific: Record<string, unknown> = { hookEventName: eventName };
+  const systemMessages: string[] = [];
 
   if (outcome.permission === "block" || outcome.permission === "ask") {
     if (eventName === "PreToolUse") {
@@ -119,13 +120,15 @@ export function renderClaudeCodeOutput(eventName: string, outcome: Outcome): str
       out.reason = outcome.reason;
     } else if (outcome.reason !== undefined) {
       // The Event cannot be blocked; surface the reason to the user instead.
-      out.systemMessage = outcome.reason;
+      systemMessages.push(outcome.reason);
     }
   }
+  // Shown to the user only; a synchronous hook's systemMessage never reaches the model.
+  // Hooks' messages first, then the dispatcher's own warning (e.g. the ask fallback).
+  if (outcome.message !== undefined) systemMessages.push(outcome.message);
+  if (outcome.warning !== undefined) systemMessages.push(outcome.warning);
+  if (systemMessages.length > 0) out.systemMessage = systemMessages.join("\n");
   if (outcome.context !== undefined && contextEvents.has(eventName)) specific.additionalContext = outcome.context;
-  if (outcome.warning !== undefined) {
-    out.systemMessage = out.systemMessage === undefined ? outcome.warning : `${out.systemMessage}\n${outcome.warning}`;
-  }
   // Universal field: the Host writes it to its terminal, on every Event (interactive sessions only).
   if (outcome.terminalSequence !== undefined) out.terminalSequence = outcome.terminalSequence;
 

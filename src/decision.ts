@@ -8,7 +8,9 @@ export type Decision =
   | { readonly kind: "block"; readonly reason: string }
   | { readonly kind: "ask"; readonly reason: string }
   | { readonly kind: "context"; readonly text: string }
-  | { readonly kind: "terminal"; readonly sequence: string };
+  | { readonly kind: "terminal"; readonly sequence: string }
+  /** Tell the user something (an announcement or warning) without blocking or adding model context. */
+  | { readonly kind: "message"; readonly text: string };
 
 export const allow = (): Decision => ({ kind: "allow" });
 export const block = (reason: string): Decision => ({ kind: "block", reason });
@@ -19,6 +21,7 @@ export const addContext = (text: string): Decision => ({ kind: "context", text }
  * notification) to its own terminal: hooks have no controlling terminal.
  */
 export const terminalSequence = (sequence: string): Decision => ({ kind: "terminal", sequence });
+export const message = (text: string): Decision => ({ kind: "message", text });
 
 /** One Hook's Decision, labelled with the Hook that made it. */
 export interface HookDecision {
@@ -36,7 +39,12 @@ export interface Outcome {
   readonly context: string | undefined;
   /** Terminal escape sequences from every Hook, in order. */
   readonly terminalSequence: string | undefined;
-  /** A message for the user rather than the model, e.g. that the Host couldn't ask. */
+  /** Messages for the user from every Hook, in order, each prefixed with the Hook name. */
+  readonly message: string | undefined;
+  /**
+   * The dispatcher's own notice for the user (not from a Hook), e.g. that the
+   * Host couldn't ask. Shown after the Hooks' messages.
+   */
   readonly warning?: string | undefined;
 }
 
@@ -45,7 +53,7 @@ const rank = { allow: 1, ask: 2, block: 3 } as const;
 export function combineDecisions(decisions: readonly HookDecision[]): Outcome {
   let permission: Outcome["permission"];
   for (const { decision } of decisions) {
-    if (decision.kind === "context" || decision.kind === "terminal") continue;
+    if (decision.kind === "context" || decision.kind === "terminal" || decision.kind === "message") continue;
     if (permission === undefined || rank[decision.kind] > rank[permission]) permission = decision.kind;
   }
 
@@ -54,11 +62,15 @@ export function combineDecisions(decisions: readonly HookDecision[]): Outcome {
   );
   const contexts = decisions.flatMap(({ decision }) => (decision.kind === "context" ? [decision.text] : []));
   const sequences = decisions.flatMap(({ decision }) => (decision.kind === "terminal" ? [decision.sequence] : []));
+  const messages = decisions.flatMap(({ hook, decision }) =>
+    decision.kind === "message" ? [`[hardhooks/${hook}] ${decision.text}`] : [],
+  );
 
   return {
     permission,
     reason: reasons.length > 0 ? reasons.join("\n") : undefined,
     context: contexts.length > 0 ? contexts.join("\n\n") : undefined,
     terminalSequence: sequences.length > 0 ? sequences.join("") : undefined,
+    message: messages.length > 0 ? messages.join("\n") : undefined,
   };
 }

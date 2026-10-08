@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ProcessResult, ProcessRunner, RunOptions } from "./index";
 
 function childEnv(env: RunOptions["env"]): NodeJS.ProcessEnv | undefined {
@@ -8,7 +8,25 @@ function childEnv(env: RunOptions["env"]): NodeJS.ProcessEnv | undefined {
   return out;
 }
 
-/** Runs real processes with node:child_process. No shell is involved. */
+/** Kill a process and everything it started: its process group on POSIX, its tree via taskkill on Windows. */
+function killTree(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } else {
+      process.kill(-pid, "SIGKILL");
+    }
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/** Runs real processes with node:child_process. No shell is involved unless `shell` is set. */
 export const nodeProcessRunner: ProcessRunner = {
   run(command, args, options = {}) {
     return new Promise<ProcessResult>((resolve) => {
@@ -30,6 +48,9 @@ export const nodeProcessRunner: ProcessRunner = {
           env: childEnv(options.env),
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
+          shell: options.shell ?? false,
+          // Its own process group on POSIX, so a timeout can kill everything it started.
+          detached: process.platform !== "win32",
         });
       } catch (error) {
         // Some failures throw instead of emitting "error", e.g. EINVAL for a .cmd/.bat on Windows.
@@ -41,9 +62,9 @@ export const nodeProcessRunner: ProcessRunner = {
           ? undefined
           : setTimeout(() => {
               timedOut = true;
-              child.kill("SIGKILL");
-              // Don't wait for "close": a grandchild that inherited stdout/stderr (e.g. a native
-              // binary behind an npm wrapper) would hold the pipes open past the kill.
+              killTree(child.pid);
+              // Don't wait for "close": grandchildren (a shell's commands, a native binary
+              // behind an npm wrapper) may survive the kill and hold our pipes open.
               child.stdout.destroy();
               child.stderr.destroy();
               finish({ exitCode: null, stdout, stderr, timedOut });

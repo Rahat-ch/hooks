@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config";
-import { addContext, allow, ask, block, terminalSequence, type Decision } from "../src/decision";
+import { addContext, allow, ask, block, message, terminalSequence, type Decision } from "../src/decision";
 import type { EventName, ToolKind } from "../src/event";
 import { defineHook, type Hook } from "../src/hooks/hook";
 import {
@@ -9,6 +9,7 @@ import {
   expectAsked,
   expectBlocked,
   expectContext,
+  expectMessage,
   expectNoDecision,
   fakeEnvironment,
   hermeticGitEnvironment,
@@ -165,6 +166,13 @@ describe("dispatcher", () => {
       expectAllowedWithWarning(result, /Cursor[\s\S]*please confirm/);
     });
 
+    it("joins Hooks' messages and the ask-fallback warning into one systemMessage, messages first", async () => {
+      const announcer = testHook("announcer", () => message("heads up"));
+      const result = await runEvent(claudeCode.bash("ls", hostPayloadFields.cursor), { hooks: [asker, announcer] });
+      const observed = expectAllowedWithWarning(result, /Cursor[\s\S]*please confirm/);
+      expect(observed.message).toMatch(/^\[hardhooks\/announcer\] heads up\n[^\n]*Cursor can't ask/);
+    });
+
     it("under strict, blocks where the Host can't ask", async () => {
       const env = fakeEnvironment({ env: { DEVIN_PROJECT_DIR: "/p" } });
       const result = await runEvent(claudeCode.bash("ls", { transcript_path: undefined }), { env, hooks: [asker], config: strict });
@@ -227,6 +235,26 @@ describe("dispatcher", () => {
     });
     expect(JSON.parse(result.stdout)).toMatchObject({ decision: "block" });
     expectBlocked(result, /tests are failing/);
+  });
+
+  it("shows a message to the user without blocking or adding context", async () => {
+    const result = await runEvent(claudeCode.stop(), {
+      hooks: [testHook("check", () => message("ran `npm run lint`: passed"), { events: ["Stop"] })],
+    });
+    const observed = expectMessage(result, /\[hardhooks\/check\] ran `npm run lint`: passed/);
+    expect(observed.decision).toBe("none");
+    expect(observed.context).toBeUndefined();
+  });
+
+  it("keeps messages beside another Hook's block", async () => {
+    const result = await runEvent(claudeCode.stop(), {
+      hooks: [
+        testHook("announcer", () => message("heads up"), { events: ["Stop"] }),
+        testHook("blocker", () => block("not yet"), { events: ["Stop"] }),
+      ],
+    });
+    expectBlocked(result, /not yet/);
+    expectMessage(result, /heads up/);
   });
 
   it("adds context at SessionStart", async () => {
