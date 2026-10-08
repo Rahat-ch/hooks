@@ -1,3 +1,5 @@
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   claudeCode,
@@ -13,6 +15,8 @@ import {
   runEvent,
   writeProjectFile,
   writeRepoConfig,
+  writeUserConfig,
+  type FakeEnvironment,
 } from "../../../test/helpers";
 
 /** Midday UTC, so the local date is 2026-03-14 in every timezone from UTC-12 to UTC+11. */
@@ -144,6 +148,95 @@ describe("session-context", () => {
     expect(Buffer.byteLength(context!, "utf8")).toBeLessThanOrEqual(1024);
     // 300 files plus NOTES.md and .hardhooks.json.
     expect(context).toMatch(/Branch: main[\s\S]*302 uncommitted[\s\S]*Commit number 1[\s\S]*NOTES\.md:\nRelease notes/);
+  });
+
+  describe("extra files stay inside the project and never include secrets", () => {
+    /** Run SessionStart with `files` set in the repo config (or the user config), returning the added context. */
+    async function contextWith(env: FakeEnvironment, files: string[], from: "repo" | "user" = "repo") {
+      const settings = { hooks: { "session-context": { files } } };
+      if (from === "repo") writeRepoConfig(env, settings);
+      else writeUserConfig(env, settings);
+      return expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/).context!;
+    }
+
+    it.each([
+      ["../home/.aws/credentials", "a relative path"],
+      ["docs/../../home/.aws/credentials", "a path that dips back out"],
+    ])("leaves out %s (%s) that escapes the project, saying why", async (path) => {
+      const env = fakeEnvironment({ now });
+      writeProjectFile(env.home, ".aws/credentials", "aws_secret_access_key=AKIAEXAMPLE\n");
+      const context = await contextWith(env, [path]);
+      expect(context).not.toContain("AKIAEXAMPLE");
+      expect(context).toContain(`${path}: (skipped: outside the project)`);
+    });
+
+    it("leaves out an absolute path, even from the user config", async () => {
+      const env = fakeEnvironment({ now });
+      writeProjectFile(env.home, "notes/todo.md", "personal notes\n");
+      const secret = join(env.home, "notes", "todo.md");
+      for (const from of ["repo", "user"] as const) {
+        const context = await contextWith(env, [secret], from);
+        expect(context).not.toContain("personal notes");
+        expect(context).toContain(`${secret}: (skipped: not a path relative to the project)`);
+      }
+    });
+
+    it("leaves out a symlink in the project that points outside it", async () => {
+      const env = fakeEnvironment({ now });
+      writeProjectFile(env.home, "notes/todo.md", "personal notes\n");
+      symlinkSync(join(env.home, "notes", "todo.md"), join(env.cwd, "linked.md"));
+      const context = await contextWith(env, ["linked.md"]);
+      expect(context).not.toContain("personal notes");
+      expect(context).toContain("linked.md: (skipped: outside the project)");
+    });
+
+    it("follows a symlink that stays inside the project", async () => {
+      const env = fakeEnvironment({ now });
+      writeProjectFile(env.cwd, "docs/real.md", "Release train on Tuesdays.\n");
+      symlinkSync(join(env.cwd, "docs", "real.md"), join(env.cwd, "ORIENTATION.md"));
+      expect(await contextWith(env, ["ORIENTATION.md"])).toContain("Release train on Tuesdays.");
+    });
+
+    it.each([
+      [".env", "API_KEY=hunter2\n", "`.env`"],
+      ["config/.env.production", "DB_PASSWORD=hunter2\n", "`.env.*`"],
+      ["certs/server.key", "-----BEGIN PRIVATE KEY-----hunter2\n", "`*.key`"],
+    ])("leaves out the protected file %s, naming the pattern", async (path, content, pattern) => {
+      const env = fakeEnvironment({ now });
+      writeProjectFile(env.cwd, path, content);
+      const context = await contextWith(env, [path]);
+      expect(context).not.toContain("hunter2");
+      expect(context).toContain(`${path}: (skipped: protected by ${pattern}`);
+    });
+
+    it("leaves out a symlink to a protected file", async () => {
+      const env = fakeEnvironment({ now });
+      writeProjectFile(env.cwd, ".env", "API_KEY=hunter2\n");
+      symlinkSync(join(env.cwd, ".env"), join(env.cwd, "settings.txt"));
+      const context = await contextWith(env, ["settings.txt"]);
+      expect(context).not.toContain("hunter2");
+      expect(context).toMatch(/settings\.txt: \(skipped: protected by `\.env`/);
+    });
+
+    it("honours protect-secrets' protect, allow and ignore files", async () => {
+      const env = fakeEnvironment({ now });
+      writeProjectFile(env.cwd, "notes/private.md", "salary data\n");
+      writeProjectFile(env.cwd, "notes/ignored.md", "ignored data\n");
+      writeProjectFile(env.cwd, ".cursorignore", "notes/ignored.md\n");
+      writeProjectFile(env.cwd, "config/dev.key", "not really a secret\n");
+      writeRepoConfig(env, {
+        hooks: {
+          "protect-secrets": { protect: ["notes/private.md"], allow: ["config/dev.key"] },
+          "session-context": { files: ["notes/private.md", "notes/ignored.md", "config/dev.key"] },
+        },
+      });
+      const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);
+      expect(context).not.toContain("salary data");
+      expect(context).not.toContain("ignored data");
+      expect(context).toMatch(/notes\/private\.md: \(skipped: protected by `notes\/private\.md` \(your `protect` option\)/);
+      expect(context).toMatch(/notes\/ignored\.md: \(skipped: protected by `notes\/ignored\.md` \(\.cursorignore\)/);
+      expect(context).toContain("not really a secret");
+    });
   });
 
   it("names an extra file it cannot read instead of failing", async () => {

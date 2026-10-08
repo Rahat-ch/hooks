@@ -82,7 +82,7 @@ Set a Preset in `.hardhooks.json`. With no config at all, you get `standard`.
 
 | Hook | Kind | `standard` (default) | `strict` |
 | --- | --- | --- | --- |
-| [`block-destructive-shell`](#block-destructive-shell) | Guard | on, temp dirs deletable | on, no paths outside the project deletable |
+| [`block-destructive-shell`](#block-destructive-shell) | Guard | on, temp dirs deletable | on, no paths outside the project deletable, asks before commands only known at run time |
 | [`git-guard`](#git-guard) | Guard | on, direct commits to `main` allowed | on, commits and pushes to `main`, `master` and the default branch blocked |
 | [`protect-secrets`](#protect-secrets) | Guard | on | on |
 | [`format-on-edit`](#format-on-edit) | | on | on |
@@ -110,11 +110,13 @@ Stops shell commands that can destroy the machine, the home directory or the pro
   - raw device writes (`dd of=/dev/disk0`, `> /dev/sda`);
   - downloads piped into a shell (`curl … | sh`).
 - **Asks:** before recursively deleting tracked or untracked work inside the project, anything in a project without git, or `.git`. Also before deletes whose targets are only known at run time (`rm -rf "$DIR"`).
+- **Asks under `strict`:** before a command whose program or script is itself only known at run time, so no Guard can see what it runs: `$CMD args`, `"$@"`, `bash -c "$CMD"`, `eval "$(…)"`, unknown text piped into a shell (`base64 -d x | sh`). `$(which x)` counts as `x`, and your own `$EDITOR`, `$VISUAL` and `$PAGER` are exempt unless the command line sets them.
 - **Allows:** deleting gitignored output inside the project, such as `node_modules` or `dist`.
 
 | Option | Type | `standard` | `strict` | |
 | --- | --- | --- | --- | --- |
 | `allowedPaths` | string[] | `["/tmp", "/var/tmp", "$TMPDIR", "$TEMP"]` | `[]` | Directories outside the project whose contents may be deleted recursively. `~`, `$VAR` and `${VAR}` are expanded, and an entry whose variable is unset is skipped. |
+| `askDynamicCommands` | boolean | `false` | `true` | Ask before a command whose program or script is only known at run time (see above). |
 
 ### git-guard
 
@@ -124,11 +126,12 @@ Stops git commands that rewrite shared history, destroy uncommitted work or skip
 - **Fail mode:** closed.
 - **Blocks:**
   - `push --force`, `-f` and `+refspec` pushes;
+  - `push --mirror`, which force-overwrites every remote ref and deletes the ones you don't have locally;
   - `reset --hard`;
   - `clean -f` in any flag combination;
   - `--no-verify` on commit or push, and `-c core.hooksPath=…`, which skips the hooks the same way.
-- **Asks:** before `push --force-with-lease`, a checkout or restore that discards all changes (`git checkout -- .`, `git restore .`), and `branch -D`.
-- **Protected branches:** blocks commits and pushes that target a protected branch. Protection is on under `strict`, or whenever you configure it.
+- **Asks:** before `push --force-with-lease`, pushes that delete remote branches or tags (`git push origin :old`, `--delete`/`-d`, `--prune`), a checkout or restore that discards all changes (`git checkout -- .`, `git restore .`), and `branch -D`.
+- **Protected branches:** blocks commits and pushes that target a protected branch, and deleting it on the remote. Protection is on under `strict`, or whenever you configure it.
 
 | Option | Type | `standard` | `strict` | |
 | --- | --- | --- | --- | --- |
@@ -148,6 +151,7 @@ Keeps the Host from reading or writing secrets.
   - `~/.kube/config` and `~/.docker/config.json`;
   - `.netrc`, `.pgpass`, `~/.git-credentials`, `~/.npmrc` and `~/.pypirc`.
 - **Also protected:** the patterns in `.claudeignore`, `.cursorignore` and `.aiignore` at the project root.
+- **hardhooks' own state:** writes into hardhooks' state directory (trust records, audit log) and its user config are blocked; reading them is fine. A `hardhooks trust` that would grant [trust](#trust) asks you first.
 - **How it checks:** file tools by their path, search tools by their path and file glob, and shell commands by every operand and redirection of every command that executes. Metadata-only programs such as `ls` and `stat` are allowed, and so is a broad search that doesn't target a protected path. The block reason names the pattern that matched.
 
 | Option | Type | Default (both Presets) | |
@@ -185,7 +189,7 @@ Tells the Host where it is when a session starts, and again after compaction.
 
 | Option | Type | Default (both Presets) | |
 | --- | --- | --- | --- |
-| `files` | string[] | `[]` | Files, relative to the project, whose contents are added after the git summary. They share the 1 KB budget. |
+| `files` | string[] | `[]` | Files, relative to the project, whose contents are added after the git summary. They share the 1 KB budget. A file outside the project (an absolute path, `..`, or a symlink out of it) or one [protect-secrets](#protect-secrets) protects is left out with a one-line note, whichever config names it. |
 | `commands` | string[][] | `[]` | Commands whose output is added after the files, each an argument list run without a shell (`["gh", "pr", "list"]`) with a 3 s timeout. They share the 1 KB budget. |
 
 ### check
@@ -302,7 +306,7 @@ hardhooks trust --status   # trusted, not trusted, or changed since you trusted 
 hardhooks trust --revoke   # forget the project
 ```
 
-`--yes` skips the question, but is refused when run from inside Claude Code, so the agent can't trust a project for you.
+`--yes` skips the question, but is refused when run from inside Claude Code. The agent can't trust a project for you in other ways either: [protect-secrets](#protect-secrets) asks you before any `hardhooks trust` the agent runs that would grant trust, however it is wrapped (`npx`, `node …/hardhooks.mjs`, `env -u CLAUDECODE`, `bash -c`), and blocks it from writing hardhooks' state directory (where trust is recorded) or your user config. `--status` and `--revoke` are not affected.
 
 Until you trust a project, those commands are skipped and the Host shows a one-line notice once per session. Nothing is blocked, and everything else works as usual, including all three Guards. Commands set in your user config always run.
 
@@ -396,7 +400,8 @@ npm rm -g hardhooks
 ## Limitations
 
 - **Bash syntax only.** The Guards parse POSIX shell and bash. PowerShell commands, whether from a PowerShell tool or from `pwsh -c '…'`, are not analysed. Neither are other interpreters (`python -c`, `node -e`).
-- **Run-time values can hide commands.** `bash -c "$CMD"` and `eval "$CMD"` run a string that doesn't exist until run time, so there is nothing to inspect, and they are allowed. Scripts run from files (`./cleanup.sh`) are not opened either. If part of a command *is* known statically, it is still checked: `rm -rf "$DIR"` asks, and `bash -c "git push -f $REMOTE"` is blocked.
+- **Run-time values can hide commands.** `bash -c "$CMD"`, `eval "$(…)"` and `$CMD args` run something that doesn't exist until run time, so there is nothing to inspect. Under `strict` they ask (`askDynamicCommands`); under `standard` they are allowed, because they are rare in an agent's commands and asking would mostly catch setup idioms such as `eval "$(pyenv init -)"`. A run-time value inside a script that is otherwise visible is checked as written, as an argument: `bash -c "cd $DIR && make"` is allowed even under `strict`, though `$DIR` could in principle hold more shell code. Scripts run from files (`./cleanup.sh`) are not opened either. If part of a command *is* known statically, it is still checked: `rm -rf "$DIR"` asks, and `bash -c "git push -f $REMOTE"` is blocked.
+- **hardhooks' own state is guarded by name.** protect-secrets blocks writes to the state directory and user config, and asks before `hardhooks trust`, when the command names them. A program that computes those paths at run time, or a `hardhooks` binary renamed or reached through an unknown variable, is not seen (under `strict`, the latter asks as a run-time command).
 - **Guards see what the agent asks to run.** They don't see what a program does once it's running. A build script, a git hook or a Makefile target can still delete files.
 - **It isn't a sandbox.** hardhooks catches the common, catastrophic mistakes of a well-meaning agent. It doesn't contain a hostile one. For untrusted code, use real isolation (containers, VMs, OS sandboxing) as well.
 - **One Node spawn per Event**, about 19 ms. Through the plugin, every Event spawns, even ones no enabled Hook handles. Those exit immediately.

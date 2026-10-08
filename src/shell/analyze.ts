@@ -356,6 +356,9 @@ function staticStdout(fields: readonly Field[], stdinText: string | undefined): 
     return unescape(format.replace(/%([s%])/g, (_, c: string) => (c === "%" ? "%" : (values.shift() ?? ""))));
   }
   if (program === "cat" && args.length === 0) return stdinText;
+  // `$(which rm)` and `$(command -v rm)` print a path to `rm`; its name is all a Guard needs.
+  if (program === "which" && args.length === 1 && !args[0]!.startsWith("-")) return args[0];
+  if (program === "command" && args.length === 2 && args[0] === "-v") return args[1];
   return undefined;
 }
 
@@ -363,8 +366,14 @@ export function programName(word: string): string {
   return (word.split(/[\\/]/).pop() ?? word).replace(/\.exe$/i, "").toLowerCase();
 }
 
-function emit(fields: readonly Field[], scope: Scope, ctx: Ctx, call: Call): void {
-  const program = fields[0] === undefined ? "" : programName(fields[0].value);
+/**
+ * `runsUnseenScript`: the command is a shell whose script only arrives at
+ * run time (unknown piped text, arguments xargs appends to `sh -c`).
+ */
+function emit(fields: readonly Field[], scope: Scope, ctx: Ctx, call: Call, runsUnseenScript = false): void {
+  const head = fields[0];
+  const program = head === undefined ? "" : programName(head.value);
+  const placeholder = call.placeholder !== undefined && call.placeholder !== "" ? call.placeholder : undefined;
   ctx.out.push({
     program,
     argv: fields.map((f) => f.value),
@@ -372,6 +381,10 @@ function emit(fields: readonly Field[], scope: Scope, ctx: Ctx, call: Call): voi
     executes: ctx.executes,
     cwd: call.cwd,
     dynamic: call.dynamic || fields.some((f) => f.dynamic),
+    dynamicProgram:
+      runsUnseenScript ||
+      head?.dynamic === true ||
+      (head !== undefined && placeholder !== undefined && head.value.includes(placeholder)),
     via: call.via,
     pipedFrom: call.pipedFrom,
   });
@@ -692,7 +705,12 @@ function unwrap(fields: Field[], scope: Scope, ctx: Ctx, call: Call): void {
           ? { value: (call.stdinText ?? call.pipedText)!, dynamic: false, quoted: false }
           : undefined;
     // A script file or an unknown stdin (`curl ... | sh`) can't be seen into.
-    if (script === undefined) return emit(fields, scope, ctx, call);
+    if (script === undefined) {
+      const unseen =
+        (invocation.mode === "command" && call.dynamic) ||
+        (invocation.mode === "stdin" && call.pipedFrom !== undefined && call.stdinText === undefined);
+      return emit(fields, scope, ctx, call, unseen);
+    }
     runScriptField(script, fields, { vars: new Map(), cwd: call.cwd }, ctx, call, via);
     return;
   }
