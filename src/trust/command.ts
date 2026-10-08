@@ -66,10 +66,10 @@ export async function trust(request: TrustRequest): Promise<number> {
   }
   if (status.state === "changed") stdout(`${describeState(status)}\n\n`);
   stdout(describeCommands(commands));
-  stdout(
-    "\nThey run with your permissions, and so does the project code they run (scripts, tests, formatter plugins).\n" +
-      "Trust covers these files; if any of them changes, hardhooks stops running the commands until you trust it again:\n",
-  );
+  if (commands.length > 0) {
+    stdout("They run with your permissions, and so does the project code they run (scripts, tests, formatter plugins).\n");
+  }
+  stdout("\nTrust covers these files; if any of them changes, hardhooks stops running the commands until you trust it again:\n");
   for (const line of describeInputs(status.inputs)) stdout(`  ${line}\n`);
 
   if (request.mode === "yes") {
