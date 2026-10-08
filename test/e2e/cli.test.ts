@@ -3,9 +3,6 @@
  * test/smoke/cli.test.ts): a Decision on stdout, config from the working
  * directory, trust from a pipe, the Node version check, closed pipes, usage,
  * and a bundle that needs nothing beside it.
- *
- * `describe.concurrent`: vitest 4 reads `sequence.concurrent` only from the
- * root config, so the e2e project's setting doesn't make these concurrent.
  */
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -16,7 +13,7 @@ import { bundlePath, claudeCode, expectBlocked, expectNoDecision, sandbox } from
 
 const forcePush = claudeCode.bash("git push --force origin main");
 
-describe.concurrent("hardhooks CLI", () => {
+describe("hardhooks CLI", () => {
   it("`run PreToolUse` denies `git push --force origin main` and exits 0", async () => {
     const result = await sandbox().event(forcePush);
     expectBlocked(result, /force/i);

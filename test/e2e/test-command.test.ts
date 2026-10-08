@@ -4,9 +4,6 @@
  * the sandbox's project and home. Asserts the printed report, the warnings on
  * stderr and the exit code; fake programs and the state dir show that nothing
  * a case triggers really runs.
- *
- * `describe.concurrent`: vitest 4 reads `sequence.concurrent` only from the
- * root config, so the e2e project's setting doesn't make these concurrent.
  */
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -33,7 +30,7 @@ const shellGuardsOnly = {
   hooks: { "protect-secrets": { enabled: false }, "format-on-edit": { enabled: false }, "session-context": { enabled: false } },
 };
 
-describe.concurrent("hardhooks test", () => {
+describe("hardhooks test", () => {
   it("passes every shipped fixture with the default config", async () => {
     const result = await runTest(sandbox());
     expect(result.stdout).toMatch(/PASS\s+git-guard\/force-push-blocked/);

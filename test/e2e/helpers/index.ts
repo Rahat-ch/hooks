@@ -5,4 +5,5 @@ export * from "./fake-program";
 export * from "./files";
 export * from "./fixtures";
 export * from "./payloads";
+export * from "./plugin";
 export * from "./sandbox";

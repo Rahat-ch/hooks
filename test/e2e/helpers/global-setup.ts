@@ -1,5 +1,5 @@
 /**
- * Runs once per `vitest --project e2e` run, before any test file: builds the
+ * Runs once per vitest run (both projects), before any test file: builds the
  * bundle the tests spawn, finds the real `node` and `git` the sandboxes put
  * on PATH, and makes one temp directory every sandbox of the run lives in
  * (removed at the end, so tests need no per-test cleanup and can run

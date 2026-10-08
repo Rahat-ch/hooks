@@ -1,33 +1,31 @@
 import { defineConfig } from "vitest/config";
 
+// Every test spawns the real bundled CLI (ADR-0006). globalSetup builds it once
+// per run, for both projects.
 export default defineConfig({
   test: {
+    globalSetup: ["test/e2e/helpers/global-setup.ts"],
+    // Tests are independent sandboxes and mostly wait on child processes, so
+    // the tests of a file run concurrently (`describe.sequential` opts a block
+    // out). vitest 4 honours this only here at the root, not in a project.
+    sequence: { concurrent: true },
     projects: [
       {
         test: {
-          name: "unit",
-          include: ["src/**/*.test.ts", "test/**/*.test.ts"],
-          exclude: ["test/smoke/**", "test/e2e/**"],
-        },
-      },
-      {
-        // Every test spawns the real bundled CLI (ADR-0006). globalSetup builds it once per run.
-        test: {
           name: "e2e",
           include: ["test/e2e/**/*.test.ts"],
-          globalSetup: ["test/e2e/helpers/global-setup.ts"],
-          // Tests are independent sandboxes and mostly wait on child processes.
-          sequence: { concurrent: true },
+          exclude: ["test/e2e/timing/**"],
           testTimeout: 30_000,
           hookTimeout: 60_000,
         },
       },
       {
-        // Spawns the built bundle; run `npm run build` first (or `npm run test:smoke`).
+        // Timed runs, after every e2e test has finished, so the suite's load doesn't skew them.
         test: {
-          name: "smoke",
-          include: ["test/smoke/**/*.test.ts"],
-          testTimeout: 20_000,
+          name: "timing",
+          include: ["test/e2e/timing/**/*.test.ts"],
+          sequence: { groupOrder: 1 },
+          testTimeout: 30_000,
         },
       },
     ],

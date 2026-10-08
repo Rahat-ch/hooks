@@ -8,9 +8,6 @@
  * every sandbox, stands for a global install; `copyBundle` makes a
  * project-local install (`<project>/node_modules/hardhooks`) or one anywhere
  * else, run with `box.run(args, { bundle })`.
- *
- * `describe.concurrent`: vitest 4 reads `sequence.concurrent` only from the
- * root config, so the e2e project's setting doesn't make these concurrent.
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -79,7 +76,7 @@ const prompts = (result: CliResult) => [...result.stdout.matchAll(/^(.*) \[y\/N\
 /** Install the built bundle into the project, as `npm i -D hardhooks` does. */
 const installInProject = (box: Sandbox) => copyBundle(join(box.project, "node_modules", "hardhooks"));
 
-describe.concurrent("hardhooks init", () => {
+describe("hardhooks init", () => {
   it("creates the project settings file with a PreToolUse entry for the enabled Guards", async () => {
     const box = shellGuards();
     const result = await box.run(["init", "--yes"], { bundle: installInProject(box) });
@@ -501,7 +498,7 @@ describe.concurrent("hardhooks init", () => {
   });
 });
 
-describe.concurrent("hardhooks uninstall", () => {
+describe("hardhooks uninstall", () => {
   const original = {
     permissions: { allow: ["Bash(npm test)"] },
     hooks: {
