@@ -5,10 +5,12 @@
 import type { Hook } from "./hook";
 import { formatOnEdit } from "./format-on-edit";
 import { gitGuard } from "./git-guard";
+import { protectSecrets } from "./protect-secrets";
 import { sessionContext } from "./session-context";
 
 export const hooks: readonly Hook<any>[] = [
   formatOnEdit,
   gitGuard,
+  protectSecrets,
   sessionContext,
 ];

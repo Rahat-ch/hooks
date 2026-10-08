@@ -65,6 +65,38 @@
           },
           "additionalProperties": false
         },
+        "protect-secrets": {
+          "description": "Blocks reading and writing secrets (.env files, private keys, cloud credentials) via file tools and shell.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "protect": {
+              "description": "Extra protected patterns, gitignore syntax, relative to the project root (`~/` for home).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allow": {
+              "description": "Exceptions, gitignore syntax. A path matching one is never protected, even by a built-in pattern.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "ignoreFiles": {
+              "description": "Ignore files at the project root whose patterns are also protected. Set [] to ignore them.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "session-context": {
           "description": "Tells the Host the date, git branch, dirty files and recent commits when a session starts or compacts.",
           "type": "object",
