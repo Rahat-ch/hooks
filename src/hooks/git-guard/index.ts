@@ -54,16 +54,18 @@ const globalOptionsWithValue = new Set([
 function gitInvocation(command: SimpleCommand, projectDir: string): GitInvocation | undefined {
   if (!command.executes || command.program !== "git") return undefined;
   let cwd = command.cwd ?? projectDir;
+  const config: string[] = [];
   const argv = command.argv;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]!;
     if (globalOptionsWithValue.has(arg)) {
       const value = argv[++i];
       if (arg === "-C" && value !== undefined) cwd = resolve(cwd, value);
+      if (arg === "-c" && value !== undefined) config.push(value);
       continue;
     }
     if (arg.startsWith("-")) continue;
-    return { subcommand: arg, args: argv.slice(i + 1), cwd };
+    return { subcommand: arg, args: argv.slice(i + 1), cwd, config };
   }
   return undefined;
 }
@@ -178,6 +180,14 @@ const rules: Record<string, (args: readonly string[]) => Finding[]> = {
   },
 };
 
+/** `git -c core.hooksPath=... commit` skips the hooks just like `--no-verify`. */
+function skipsHooks(call: GitInvocation): boolean {
+  return (
+    (call.subcommand === "commit" || call.subcommand === "push") &&
+    call.config.some((setting) => setting.toLowerCase().startsWith("core.hookspath="))
+  );
+}
+
 function decide(findings: readonly Finding[]): Decision | undefined {
   const strongest = findings.some((f) => f.decision === "block") ? "block" : findings.length > 0 ? "ask" : undefined;
   if (strongest === undefined) return undefined;
@@ -206,7 +216,10 @@ export const gitGuard = defineHook<GitGuardOptions>({
       );
     }
     const invocations = analysis.commands.flatMap((c) => gitInvocation(c, event.cwd) ?? []);
-    const findings = invocations.flatMap((call) => rules[call.subcommand]?.(call.args) ?? []);
+    const findings = invocations.flatMap((call) => [
+      ...(rules[call.subcommand]?.(call.args) ?? []),
+      ...(skipsHooks(call) ? [{ decision: "block", reason: reasons.noVerify } as const] : []),
+    ]);
     if (protectionEnabled(options)) {
       const violations = await protectedBranchViolations(invocations, options, env);
       findings.push(...violations.map((reason): Finding => ({ decision: "block", reason })));

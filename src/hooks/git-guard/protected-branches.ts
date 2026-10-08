@@ -19,6 +19,8 @@ export interface GitInvocation {
   readonly subcommand: string;
   readonly args: readonly string[];
   readonly cwd: string;
+  /** `key=value` settings from git's global `-c` options. */
+  readonly config: readonly string[];
 }
 
 const GIT_TIMEOUT_MS = 5_000;

@@ -119,6 +119,8 @@ describe("git-guard", () => {
     "git push --no-verify",
     "git push --no-verify origin feature",
     "git commit --no-verif -m wip",
+    "git -c core.hooksPath=/dev/null commit -m wip",
+    "git -c core.hookspath=/tmp/none push origin feature",
   ])("blocks `%s`, which skips the user's git hooks", async (command) => {
     expectBlocked(await runEvent(claudeCode.bash(command)), /no-verify/);
   });
