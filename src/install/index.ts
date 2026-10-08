@@ -4,12 +4,14 @@
  * home) and ask for confirmation through `confirm`, so tests run them against
  * temp dirs. The CLI commands only parse flags and call these.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { formatConfigError, loadConfig } from "../config/load";
 import type { Environment } from "../environment";
 import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
+import { projectRoot as projectRootOf } from "../trust";
+import { untrustedNote } from "../trust/command";
 import { unifiedDiff } from "./diff";
 import { mergeEntries, wantedEntries, withoutHardhooks, type Entry, type JsonObject } from "./entries";
 
@@ -36,11 +38,7 @@ export interface InstallRequest {
 
 /** The project directory: the repository root above `env.cwd` (`.git` dir or file), else `env.cwd`. */
 export function projectRoot(env: Environment): string {
-  const start = resolve(env.cwd);
-  for (let dir = start; ; dir = dirname(dir)) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    if (dirname(dir) === dir) return start;
-  }
+  return projectRootOf(env.cwd);
 }
 
 /**
@@ -191,11 +189,13 @@ export async function init(request: InstallRequest): Promise<number> {
       `Note: ${bundle} is specific to this machine. To commit this file for a team, install hardhooks as a devDependency and re-run init.`,
     );
   }
-  return apply(request, path, (settings) => ({
+  const code = await apply(request, path, (settings) => ({
     next: mergeEntries(settings, entries, bundle),
     summary,
     unchanged: `${path} is already up to date.`,
   }));
+  for (const line of untrustedNote(env, hooks, loaded.config)) request.stdout(`${line}\n`);
+  return code;
 }
 
 /** `hardhooks uninstall`: remove every entry hardhooks wrote, and nothing else. */

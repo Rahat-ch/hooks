@@ -28,6 +28,14 @@ export interface ResolvedConfig {
   preset: PresetName;
   /** Per-Hook overrides by Hook name. A Hook with no entry uses its own `defaults[preset]`. */
   hooks: Readonly<Record<string, HookOverrides | undefined>>;
+  /**
+   * Command options (a Hook's `commandOptions`) that the repo config sets, by
+   * Hook name (ADR-0005). They apply only once the user trusts the project;
+   * until then `untrustedHooks` applies. Absent when the repo config sets none.
+   */
+  repoCommands?: Readonly<Record<string, readonly string[]>>;
+  /** `hooks` without the repo config's command options: the user config's values, or the Preset's, stand in. */
+  untrustedHooks?: Readonly<Record<string, HookOverrides | undefined>>;
 }
 
 /** No config files: the `standard` Preset with no overrides. */

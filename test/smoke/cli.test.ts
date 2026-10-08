@@ -92,6 +92,51 @@ describe("hardhooks CLI (bundled)", () => {
     }
   });
 
+  it("`trust` gates the repo's own commands: refused from a pipe, granted with --yes, reported and revoked", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "hardhooks-smoke-")));
+    try {
+      const project = join(root, "project");
+      mkdirSync(join(project, ".git"), { recursive: true });
+      const config = join(root, "config");
+      // Keep config and trust state in the temp dir, and run as a person would (not inside an agent's shell).
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: root,
+        USERPROFILE: root,
+        XDG_CONFIG_HOME: config,
+        APPDATA: config,
+        XDG_STATE_HOME: join(root, "state"),
+        LOCALAPPDATA: join(root, "local"),
+      };
+      delete env.CLAUDECODE;
+      const marker = join(project, "check-ran");
+      const command = `node -e "require('fs').writeFileSync('check-ran', '')"`;
+      writeFileSync(join(project, ".hardhooks.json"), JSON.stringify({ hooks: { check: { enabled: true, command } } }));
+      const stop = JSON.stringify(claudeCode.stop({ cwd: project }));
+      const run = (args: string[], stdin = "") => hardhooks(args, stdin, [], { cwd: project, env });
+
+      const untrusted = run(["run", "Stop"], stop);
+      expect(existsSync(marker)).toBe(false);
+      expect(JSON.parse(untrusted.stdout).systemMessage).toMatch(/not trusted.*hardhooks trust/);
+
+      const piped = run(["trust"], "y\n");
+      expect([piped.exitCode, piped.stderr]).toEqual([1, expect.stringMatching(/needs a terminal/)]);
+      expect(piped.stdout).toContain(`check: command from .hardhooks.json: ${command}`);
+      expect(run(["trust", "--status"]).exitCode).toBe(1);
+
+      const granted = run(["trust", "--yes"]);
+      expect(granted.exitCode, granted.stderr).toBe(0);
+      expect(run(["trust", "--status"]).stdout).toContain(`${project} is trusted.`);
+      run(["run", "Stop"], stop);
+      expect(existsSync(marker)).toBe(true);
+
+      expect(run(["trust", "--revoke"]).stdout).toContain(`No longer trusting ${project}.`);
+      expect(run(["trust", "--status"]).exitCode).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("exits 0 silently for an Event no Hook handles", () => {
     expectNoDecision(hardhooks(["run", "Notification"], JSON.stringify(claudeCode.notification("idle"))));
   });

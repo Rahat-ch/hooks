@@ -5,6 +5,19 @@ import type { HostResult } from "../dispatcher";
 import type { Environment } from "../environment";
 import type { EventName, HookEvent, ToolKind } from "../event";
 
+/** What a Hook asks before running a command that comes from the project itself (ADR-0005). */
+export interface ProjectTrust {
+  /**
+   * Whether the Hook may run `what`: a command it autodetected from the
+   * project's files (a package.json script, a project formatter, ...),
+   * described for the user, e.g. "`npm run lint` (detected from package.json)".
+   * False until the user runs `hardhooks trust` in the project, or after the
+   * files it covers change; the dispatcher then tells the user what was
+   * skipped, once per session.
+   */
+  mayRun(what: string): boolean;
+}
+
 /**
  * A Hook: one reusable unit hardhooks ships. Host-neutral: it sees a
  * normalized HookEvent and returns a Decision. It never writes stdout/stderr
@@ -40,12 +53,34 @@ export interface Hook<Options = Record<string, never>> {
    */
   readonly optionsSchema?: ObjectSchema<Options>;
   /**
+   * Options whose values are commands hardhooks runs. Set in the repo's
+   * `.hardhooks.json`, they apply only in a trusted project (`hardhooks
+   * trust`, ADR-0005); elsewhere the dispatcher withholds them and tells the
+   * user. The user config's values always apply.
+   */
+  readonly commandOptions?: readonly (keyof Options & string)[];
+  /**
+   * What this Hook would autodetect and run in the project at `cwd` with
+   * these options, one line each, for `hardhooks trust` to show before the
+   * user decides. Omit when the Hook autodetects nothing.
+   */
+  projectCommands?(cwd: string, options: Options): readonly string[];
+  /**
    * Enabled flag and a value for every option under each Preset. User and
    * repo config override these key by key (ADR-0002, #3).
    */
   readonly defaults: Readonly<Record<PresetName, HookSettings<Options>>>;
-  /** Decide for one Event. Return undefined for "nothing to say". May be async. */
-  run(event: HookEvent, options: Options, env: Environment): Decision | undefined | Promise<Decision | undefined>;
+  /**
+   * Decide for one Event. Return undefined for "nothing to say". May be async.
+   * Before running a command it autodetected from the project's files, a Hook
+   * asks `trust.mayRun` (ADR-0005).
+   */
+  run(
+    event: HookEvent,
+    options: Options,
+    env: Environment,
+    trust: ProjectTrust,
+  ): Decision | undefined | Promise<Decision | undefined>;
   /**
    * Optional: called once every selected Hook has decided and the Host output
    * is final, with what happened (e.g. audit-log). It can't change the

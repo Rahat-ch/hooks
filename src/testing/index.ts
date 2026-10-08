@@ -15,6 +15,8 @@ import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
 import { parseCaseFile, type TestCase } from "./cases";
 import type { FixtureFile } from "./fixture-files";
+import { trustStatus } from "../trust";
+import { untrustedNote } from "../trust/command";
 import { installWarnings } from "./install-check";
 import { judge, type Verdict } from "./observe";
 import { sandboxProcessRunner } from "./sandbox";
@@ -61,6 +63,9 @@ export async function runTests(request: TestRequest): Promise<number> {
     return 1;
   }
 
+  // Cases see the project's real trust (ADR-0005), though the sandbox below never runs anything.
+  const trusted = trustStatus(env, env.cwd).state === "trusted";
+
   const sandboxDir = mkdtempSync(join(tmpdir(), "hardhooks-test-"));
   try {
     const stateDir = join(sandboxDir, "state");
@@ -85,18 +90,20 @@ export async function runTests(request: TestRequest): Promise<number> {
       for (const testCase of parsed.cases) {
         const skip = hook === undefined ? `no Hook named ${fixture.hook}` : skipReason(hook, config, testCase);
         if (skip !== undefined) print({ status: "skip", label, name: testCase.name, detail: [skip] });
-        else print(outcome(label, testCase, await runCase(testCase, config, fixtureEnv, hooks)));
+        else print(outcome(label, testCase, await runCase(testCase, config, fixtureEnv, hooks, trusted)));
       }
     }
 
     stdout(`\nYour cases (${userCases.location})\n`);
     if (userCases.cases.length === 0) stdout(`  none: add *.json case files there, or pass --cases <path>\n`);
     for (const testCase of userCases.cases) {
-      print(outcome(testCase.source, testCase, await runCase(testCase, config, caseEnv, hooks)));
+      print(outcome(testCase.source, testCase, await runCase(testCase, config, caseEnv, hooks, trusted)));
     }
 
     // Warnings, not failures: CI checks out a repo where nothing is installed for the Host.
     for (const warning of installWarnings(env, hooks, config)) stderr(`hardhooks: warning: ${warning}\n`);
+    const note = untrustedNote(env, hooks, config);
+    if (note.length > 0) stderr(`hardhooks: ${note.join("\n")}\n`);
 
     const count = (status: Outcome["status"]) => outcomes.filter((o) => o.status === status).length;
     stdout(`\n${count("pass")} passed, ${count("fail")} failed, ${count("skip")} skipped\n`);
@@ -125,9 +132,15 @@ function skipReason(hook: Hook<any>, config: ResolvedConfig, testCase: TestCase)
   return undefined;
 }
 
-async function runCase(testCase: TestCase, config: ResolvedConfig, env: Environment, hooks: readonly Hook<any>[]): Promise<Verdict> {
+async function runCase(
+  testCase: TestCase,
+  config: ResolvedConfig,
+  env: Environment,
+  hooks: readonly Hook<any>[],
+  trusted: boolean,
+): Promise<Verdict> {
   const caseEnv = testCase.hostEnv === undefined ? env : { ...env, env: { ...env.env, ...testCase.hostEnv } };
-  const result = await dispatch({ event: testCase.event, payload: JSON.stringify(testCase.payload), config, env: caseEnv, hooks });
+  const result = await dispatch({ event: testCase.event, payload: JSON.stringify(testCase.payload), config, env: caseEnv, hooks, trusted });
   return judge(result, testCase.expect);
 }
 

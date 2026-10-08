@@ -9,6 +9,7 @@ import {
   projectSettingsPath,
   readSettings,
   runInit,
+  runTrust,
   runUninstall,
   userSettingsPath,
   writeRepoConfig,
@@ -252,6 +253,28 @@ describe("hardhooks init", () => {
     // The user-level file applies to every project, so it keeps the absolute path.
     expect(readSettings(userSettingsPath(env))).toEqual({
       hooks: { PreToolUse: [entry(local, "PreToolUse", "Bash")] },
+    });
+  });
+
+  describe("trust (ADR-0005)", () => {
+    it("mentions `hardhooks trust` when the repo config has commands that won't run until the project is trusted", async () => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, { hooks: { check: { enabled: true, command: "npm run verify" } } });
+
+      const { stdout, exitCode } = await runInit({ env, mode: "yes" });
+
+      expect(exitCode).toBe(0);
+      expect(stdout).toMatch(/check: command from \.hardhooks\.json: npm run verify[\s\S]*run `hardhooks trust`/);
+    });
+
+    it("says nothing about trust once the project is trusted, or when it has no commands", async () => {
+      const plain = fakeEnvironment();
+      expect((await runInit({ env: plain, mode: "yes" })).stdout).not.toMatch(/trust/);
+
+      const trusted = fakeEnvironment();
+      writeRepoConfig(trusted, { hooks: { check: { enabled: true, command: "npm run verify" } } });
+      await runTrust({ env: trusted, mode: "yes" });
+      expect((await runInit({ env: trusted, mode: "yes" })).stdout).not.toMatch(/trust/);
     });
   });
 

@@ -6,6 +6,7 @@ import type { Command } from "./commands/command";
 import { initCommand, uninstallCommand } from "./commands/init";
 import { runCommand } from "./commands/run";
 import { testCommand } from "./commands/test";
+import { trustCommand } from "./commands/trust";
 import { nodeEnvironment } from "./environment";
 
 /** CLI commands. One entry per line, sorted, so parallel additions merge cleanly. */
@@ -13,6 +14,7 @@ const commands: Readonly<Record<string, Command>> = {
   init: initCommand,
   run: runCommand,
   test: testCommand,
+  trust: trustCommand,
   uninstall: uninstallCommand,
 };
 
@@ -23,6 +25,9 @@ commands:
   run <Event>                         run the Hooks for one Event (reads the Host payload on stdin)
   test [--cases <path>]               check the Hooks behave as configured: shipped fixtures plus
                                       your cases (default .hardhooks/tests/*.json); exits 1 on failure
+  trust [--yes | --revoke | --status] let hardhooks run this project's own commands (its .hardhooks.json
+                                      commands, package.json scripts, formatters); --status exits 1
+                                      unless trusted
   uninstall [--user] [--dry-run] [--yes]
                                       remove the entries init wrote
 `;
@@ -66,6 +71,7 @@ async function main(argv: readonly string[]): Promise<number> {
     args,
     env: nodeEnvironment(),
     readStdin,
+    interactive: process.stdin.isTTY === true,
     confirm,
     // This file is the bundle (dist/hardhooks.mjs); Node resolves npm's bin symlink to it.
     bundlePath: fileURLToPath(import.meta.url),

@@ -132,7 +132,7 @@ const optionsSchema = s.object({
   }),
   commands: s.array(s.array(s.string()), {
     description:
-      'Commands whose output is added after the files, each an argument list run without a shell, e.g. ["gh", "pr", "list"]. They share the 1 KB budget.',
+      'Commands whose output is added after the files, each an argument list run without a shell, e.g. ["gh", "pr", "list"]. They share the 1 KB budget. From a repo config, they run only once the project is trusted (`hardhooks trust`).',
   }),
 });
 
@@ -142,6 +142,7 @@ export const sessionContext = defineHook({
   events: ["SessionStart"],
   failMode: "open",
   optionsSchema,
+  commandOptions: ["commands"],
   defaults: {
     standard: { enabled: true, options: { files: [], commands: [] } },
     strict: { enabled: true, options: { files: [], commands: [] } },
