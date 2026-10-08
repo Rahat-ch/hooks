@@ -21,8 +21,8 @@ interface CommandHook {
 
 /** The files `npm publish` would ship, i.e. what an `npm` plugin source unpacks. */
 function packedFiles(): string[] {
-  // shell: npm is a .cmd shim on Windows. The arguments are constants.
-  const result = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+  // Through a shell because npm is a .cmd shim on Windows; the command is a constant.
+  const result = spawnSync("npm pack --dry-run --json --ignore-scripts", {
     cwd: repoRoot,
     encoding: "utf8",
     shell: true,
