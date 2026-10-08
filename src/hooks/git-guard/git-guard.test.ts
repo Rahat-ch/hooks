@@ -1,10 +1,14 @@
+import { join } from "node:path";
 import { describe, it } from "vitest";
+import type { ResolvedConfig } from "../../config";
 import {
   claudeCode,
   expectAsked,
   expectBlocked,
   expectFixture,
   expectNoDecision,
+  hermeticGitEnvironment,
+  initRealGitRepo,
   loadFixtures,
   runEvent,
 } from "../../../test/helpers";
@@ -213,6 +217,93 @@ describe("git-guard", () => {
   it("does not fail on unparseable prose inside data", async () => {
     expectNoDecision(await runEvent(claudeCode.bash(`git commit -m "don't run 'git push --force (please"`)));
     expectNoDecision(await runEvent(claudeCode.bash("cat <<'EOF' > notes.md\nit's \"unbalanced ( prose\nEOF")));
+  });
+
+  describe("protected branches", () => {
+    const strict: ResolvedConfig = { preset: "strict", hooks: {} };
+    const standard: ResolvedConfig = { preset: "standard", hooks: {} };
+    const custom = (preset: ResolvedConfig["preset"], protectedBranches: string[]): ResolvedConfig => ({
+      preset,
+      hooks: { "git-guard": { enabled: true, options: { protectedBranches } } },
+    });
+
+    /** Run `command` in a real repo (the project dir) currently on `branch`. */
+    async function inRepo(command: string, config: ResolvedConfig, options: { branch?: string; originHead?: string } = {}) {
+      const env = hermeticGitEnvironment();
+      initRealGitRepo(env, env.cwd, options);
+      return runEvent(claudeCode.bash(command), { env, config });
+    }
+
+    it.each(["git commit -m 'wip'", "git commit --amend --no-edit", "git push", "git push -u origin", "git push origin main", "git push origin HEAD"])(
+      "under strict, blocks `%s` on main",
+      async (command) => {
+        expectBlocked(await inRepo(command, strict, { branch: "main" }), /protected branch `main`/);
+      },
+    );
+
+    it.each(["git commit -m 'wip'", "git push origin master"])("under strict, blocks `%s` on master", async (command) => {
+      expectBlocked(await inRepo(command, strict, { branch: "master" }), /protected branch `master`/);
+    });
+
+    it.each(["git commit -m 'wip'", "git push", "git push origin main"])(
+      "under standard, allows `%s` on main",
+      async (command) => {
+        expectNoDecision(await inRepo(command, standard, { branch: "main" }));
+      },
+    );
+
+    it.each(["git commit -m 'wip'", "git push -u origin feature", "git push origin HEAD", "git push origin feature:feature"])(
+      "under strict, allows `%s` on a feature branch",
+      async (command) => {
+        expectNoDecision(await inRepo(command, strict, { branch: "feature" }));
+      },
+    );
+
+    it.each([
+      "git push origin feature:main",
+      "git push origin HEAD:refs/heads/master",
+      "git push origin --delete main",
+      "git push --all origin",
+      "git checkout main && git commit -m wip",
+      "git switch master; git commit -m wip",
+    ])("under strict, blocks `%s` from a feature branch", async (command) => {
+      expectBlocked(await inRepo(command, strict, { branch: "feature" }), /protected branch/);
+    });
+
+    it.each(["git switch -c fix && git commit -m wip", "git checkout -b fix && git commit -m wip && git push -u origin fix"])(
+      "under strict, allows `%s` on main, because the commit lands on the new branch",
+      async (command) => {
+        expectNoDecision(await inRepo(command, strict, { branch: "main" }));
+      },
+    );
+
+    it("under strict, protects the detected default branch", async () => {
+      expectBlocked(await inRepo("git commit -m wip", strict, { branch: "trunk", originHead: "trunk" }), /`trunk`/);
+      expectBlocked(await inRepo("git push origin trunk", strict, { branch: "feature", originHead: "trunk" }), /`trunk`/);
+      expectNoDecision(await inRepo("git commit -m wip", strict, { branch: "trunk" }));
+    });
+
+    it("honours a custom protectedBranches list, under any Preset", async () => {
+      expectBlocked(await inRepo("git commit -m wip", custom("standard", ["release"]), { branch: "release" }), /`release`/);
+      expectBlocked(await inRepo("git push origin release", custom("standard", ["release"]), { branch: "x" }), /`release`/);
+      expectNoDecision(await inRepo("git commit -m wip", custom("standard", ["release"]), { branch: "main" }));
+      expectBlocked(await inRepo("git commit -m wip", custom("strict", ["release"]), { branch: "release" }), /`release`/);
+    });
+
+    it("checks the repo the command actually runs in", async () => {
+      const env = hermeticGitEnvironment();
+      initRealGitRepo(env, env.cwd, { branch: "feature" });
+      initRealGitRepo(env, join(env.cwd, "vendor", "lib"), { branch: "main" });
+      const run = (command: string) => runEvent(claudeCode.bash(command), { env, config: strict });
+      expectBlocked(await run("cd vendor/lib && git commit -m wip"), /`main`/);
+      expectBlocked(await run("git -C vendor/lib commit -m wip"), /`main`/);
+      expectNoDecision(await run("git commit -m wip"));
+    });
+
+    it("stays out of the way outside a git repo", async () => {
+      const env = hermeticGitEnvironment();
+      expectNoDecision(await runEvent(claudeCode.bash("git commit -m wip"), { env, config: strict }));
+    });
   });
 
   it.each(loadFixtures(new URL("./fixtures", import.meta.url)))("fixture $file: $description", async (fixture) => {

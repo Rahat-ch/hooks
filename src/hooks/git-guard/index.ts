@@ -2,22 +2,33 @@
  * git-guard (Guard, fails closed): stops git commands that rewrite shared
  * history, destroy uncommitted work or skip the user's git hooks.
  *
- * Blocks force-push (`--force`, `-f`, `+refspec`), `reset --hard`,
- * `clean -f` and `--no-verify` on commit/push. Unparseable input is blocked
- * (ADR-0004).
+ * - Blocks force-push (`--force`, `-f`, `+refspec`), `reset --hard`,
+ *   `clean -f` and `--no-verify` on commit/push.
+ * - Asks before `--force-with-lease`, discard-all `checkout`/`restore` and
+ *   `branch -D`.
+ * - When protection is on (`strict`, or `protectedBranches` configured),
+ *   blocks commits and pushes to protected branches.
+ * - Blocks input it can't analyse (ADR-0004).
  */
 import { resolve } from "node:path";
 import { block, type Decision } from "../../decision";
 import { analyzeShell, parseOptions, type ParsedArgs, type SimpleCommand } from "../../shell";
 import { defineHook } from "../hook";
+import {
+  protectedBranchViolations,
+  protectionEnabled,
+  pushOptionsWithValue,
+  type GitInvocation,
+  type ProtectionOptions,
+} from "./protected-branches";
 
-/** One git invocation, after git's own global options. */
-interface GitCall {
-  readonly subcommand: string;
-  readonly args: readonly string[];
-  /** Where git runs, following `cd` and `git -C`. */
-  readonly cwd: string | undefined;
-}
+/**
+ * Options (the config schema is #3's; these are the shapes it will validate).
+ * Protection is on when `protectedBranches` is non-empty or
+ * `protectDefaultBranch` is true: off under `standard`, `main`, `master` and
+ * the detected default branch under `strict`.
+ */
+export type GitGuardOptions = ProtectionOptions;
 
 interface Finding {
   readonly decision: "block" | "ask";
@@ -35,15 +46,20 @@ const globalOptionsWithValue = new Set([
   "--super-prefix",
 ]);
 
-function gitCall(command: SimpleCommand): GitCall | undefined {
+/**
+ * The git invocation an executing command makes, after git's global options.
+ * `cwd` follows `cd` and `git -C`; when a `cd` couldn't be resolved it falls
+ * back to the project directory.
+ */
+function gitInvocation(command: SimpleCommand, projectDir: string): GitInvocation | undefined {
   if (!command.executes || command.program !== "git") return undefined;
-  let cwd = command.cwd;
+  let cwd = command.cwd ?? projectDir;
   const argv = command.argv;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]!;
     if (globalOptionsWithValue.has(arg)) {
       const value = argv[++i];
-      if (arg === "-C" && value !== undefined) cwd = cwd === undefined ? undefined : resolve(cwd, value);
+      if (arg === "-C" && value !== undefined) cwd = resolve(cwd, value);
       continue;
     }
     if (arg.startsWith("-")) continue;
@@ -96,7 +112,7 @@ const everything = new Set([".", "./", "./*", "*", ":/", ":/.", ":/*", ":(top)",
 
 const rules: Record<string, (args: readonly string[]) => Finding[]> = {
   push(args) {
-    const parsed = parseOptions(args, { withValue: ["-o", "--push-option", "--repo", "--receive-pack", "--exec"] });
+    const parsed = parseOptions(args, { withValue: pushOptionsWithValue });
     const findings: Finding[] = [];
     const force = parsed.options.some(
       (o) => o.name === "-f" || (isLong(o.name, "--force") && !o.name.startsWith("--force-")),
@@ -169,17 +185,17 @@ function decide(findings: readonly Finding[]): Decision | undefined {
   return strongest === "block" ? block(reason) : { kind: "ask", reason };
 }
 
-export const gitGuard = defineHook({
+export const gitGuard = defineHook<GitGuardOptions>({
   name: "git-guard",
   description: "Blocks git commands that rewrite shared history, destroy uncommitted work or skip git hooks.",
   events: ["PreToolUse"],
   tools: ["shell"],
   failMode: "closed",
   defaults: {
-    standard: { enabled: true, options: {} },
-    strict: { enabled: true, options: {} },
+    standard: { enabled: true, options: { protectedBranches: [], protectDefaultBranch: false } },
+    strict: { enabled: true, options: { protectedBranches: ["main", "master"], protectDefaultBranch: true } },
   },
-  run(event, _options, env) {
+  async run(event, options, env) {
     const command = event.tool?.command;
     if (command === undefined) return undefined;
     const analysis = analyzeShell(command, { cwd: event.cwd, home: env.home });
@@ -189,10 +205,12 @@ export const gitGuard = defineHook({
           "Fix the syntax or split it into simpler commands.",
       );
     }
-    const findings = analysis.commands.flatMap((c) => {
-      const call = gitCall(c);
-      return call === undefined ? [] : (rules[call.subcommand]?.(call.args) ?? []);
-    });
+    const invocations = analysis.commands.flatMap((c) => gitInvocation(c, event.cwd) ?? []);
+    const findings = invocations.flatMap((call) => rules[call.subcommand]?.(call.args) ?? []);
+    if (protectionEnabled(options)) {
+      const violations = await protectedBranchViolations(invocations, options, env);
+      findings.push(...violations.map((reason): Finding => ({ decision: "block", reason })));
+    }
     return decide(findings);
   },
 });

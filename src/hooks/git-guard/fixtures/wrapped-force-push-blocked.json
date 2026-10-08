@@ -1,0 +1,15 @@
+{
+  "description": "A force-push wrapped in bash -c is still blocked",
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "fixture-session",
+    "transcript_path": "/home/user/.claude/projects/demo/transcript.jsonl",
+    "cwd": "/home/user/demo",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": { "command": "bash -c \"git push -f origin main\"", "description": "Push to main" },
+    "tool_use_id": "toolu_fixture"
+  },
+  "expect": { "decision": "block", "reason": "force" }
+}
