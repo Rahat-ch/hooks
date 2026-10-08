@@ -147,6 +147,8 @@ describe("protect-secrets", () => {
         "bash -c \"cat '.env' $X\"",
         'sudo sh -c "cp .env $DEST"',
         "echo config | xargs -I{} sh -c 'cat {}/.env'",
+        "su -c 'cat .env'",
+        "flock /tmp/l -c 'source .env'",
         "cat .e''nv",
         "cat ./config/../.ENV",
         "cp -t /tmp .env",

@@ -383,38 +383,115 @@ function emit(fields: readonly Field[], scope: Scope, ctx: Ctx, call: Call): voi
   if (call.stdinText !== undefined) inspectData(call.stdinText, scope, ctx);
 }
 
-/** GNU-style option scan that stops at the first operand, as launcher programs do. */
+interface ScannedOption {
+  name: string;
+  value: string | undefined;
+  /** The value as a field, keeping its unresolved parts. */
+  field?: Field | undefined;
+}
+
+/** The last `length` characters of a field, e.g. the value in `--command=...`. */
+function suffixField(field: Field, length: number): Field {
+  const offset = field.value.length - length;
+  const spans = fieldSpans(field).flatMap(([s, e]): Span[] => (e <= offset ? [] : [[Math.max(s, offset) - offset, e - offset]]));
+  return { value: field.value.slice(offset), dynamic: spans.length > 0, quoted: field.quoted, spans };
+}
+
+/**
+ * GNU-style option scan. It stops at the first operand, as launcher programs
+ * do, unless `permute` (getopt's default), which collects operands and goes on.
+ */
 function scanOptions(
   args: readonly Field[],
   shortWithValue: string,
   longWithValue: readonly string[] = [],
-): { index: number; options: { name: string; value: string | undefined }[] } {
-  const options: { name: string; value: string | undefined }[] = [];
+  permute = false,
+): { index: number; options: ScannedOption[]; operands: Field[] } {
+  const options: ScannedOption[] = [];
+  const operands: Field[] = [];
+  const withValue = (name: string, field: Field, value: string): ScannedOption => ({
+    name,
+    value,
+    field: suffixField(field, value.length),
+  });
   let i = 0;
   while (i < args.length) {
-    const arg = args[i]!.value;
-    if (arg === "--") return { index: i + 1, options };
+    const field = args[i]!;
+    const arg = field.value;
+    if (arg === "--") {
+      if (permute) operands.push(...args.slice(i + 1));
+      return { index: i + 1, options, operands };
+    }
     if (arg.startsWith("--")) {
       const eq = arg.indexOf("=");
-      if (eq !== -1) options.push({ name: arg.slice(0, eq), value: arg.slice(eq + 1) });
-      else if (longWithValue.includes(arg)) options.push({ name: arg, value: args[++i]?.value });
-      else options.push({ name: arg, value: undefined });
+      const next = args[i + 1];
+      if (eq !== -1) {
+        options.push(withValue(arg.slice(0, eq), field, arg.slice(eq + 1)));
+      } else if (longWithValue.includes(arg) && next !== undefined) {
+        options.push(withValue(arg, next, next.value));
+        i++;
+      } else {
+        options.push({ name: arg, value: undefined });
+      }
       i++;
       continue;
     }
-    if (!arg.startsWith("-") || arg.length === 1) break;
+    if (!arg.startsWith("-") || arg.length === 1) {
+      if (!permute) break;
+      operands.push(field);
+      i++;
+      continue;
+    }
     for (let j = 1; j < arg.length; j++) {
       const letter = arg[j]!;
       if (shortWithValue.includes(letter)) {
         const rest = arg.slice(j + 1);
-        options.push({ name: `-${letter}`, value: rest !== "" ? rest : args[++i]?.value });
+        const next = args[i + 1];
+        if (rest !== "") {
+          options.push(withValue(`-${letter}`, field, rest));
+        } else if (next !== undefined) {
+          options.push(withValue(`-${letter}`, next, next.value));
+          i++;
+        } else {
+          options.push({ name: `-${letter}`, value: undefined });
+        }
         break;
       }
       options.push({ name: `-${letter}`, value: undefined });
     }
     i++;
   }
-  return { index: i, options };
+  return { index: i, options, operands };
+}
+
+/** The value of the last of the named options, as a field. */
+function optionField(options: readonly ScannedOption[], names: readonly string[]): Field | undefined {
+  return options.filter((o) => names.includes(o.name)).pop()?.field;
+}
+
+/** Fields joined with spaces into one string, as `eval` and `watch` do. */
+function joinFields(fields: readonly Field[]): Field {
+  let value = "";
+  const spans: Span[] = [];
+  for (const field of fields) {
+    if (value !== "") value += " ";
+    spans.push(...fieldSpans(field).map(([s, e]): Span => [s + value.length, e + value.length]));
+    value += field.value;
+  }
+  return { value, dynamic: fields.some((f) => f.dynamic), quoted: false, spans };
+}
+
+/** `su`/`runuser`: `-c` runs a string in the user's shell; options may follow the user name. */
+function switchUser(args: readonly Field[], runuser: boolean): Launch | undefined {
+  const longWithValue = ["--command", "--session-command", "--group", "--supp-group", "--shell", "--whitelist-environment", "--user"];
+  const { options } = scanOptions(args, "cgGswu", longWithValue, true);
+  const script = optionField(options, ["-c", "--command", "--session-command"]);
+  if (script !== undefined) return { inner: [], script, spawns: true };
+  // `runuser -u user [--] command args`
+  if (runuser && options.some((o) => o.name === "-u" || o.name === "--user")) {
+    return { inner: args.slice(scanOptions(args, "cgGswu", longWithValue).index), spawns: true };
+  }
+  return undefined;
 }
 
 const isAssignment = (field: Field) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(field.value);
@@ -428,6 +505,8 @@ interface Launch {
   spawns: boolean;
   /** Text the launcher replaces with run-time values in `inner` (`xargs -I {}`). */
   placeholder?: string | undefined;
+  /** Instead of `inner`, a string the launcher runs with `sh -c` (`su -c`, `watch`). */
+  script?: Field | undefined;
 }
 
 function dirOption(options: { name: string; value: string | undefined }[], names: string[], cwd: string | undefined) {
@@ -442,13 +521,10 @@ const launchers: Record<string, (args: Field[], call: Call) => Launch | undefine
     const rest = args[0]?.value === "-" ? args.slice(1) : args;
     const { index, options } = scanOptions(rest, "uCS", ["--unset", "--chdir", "--split-string"]);
     let inner = rest.slice(index);
-    const splitString = options.filter((o) => o.name === "-S" || o.name === "--split-string").pop()?.value;
+    const splitString = optionField(options, ["-S", "--split-string"]);
     if (splitString !== undefined) {
-      // The option's value ends its field (`-S str`, `-Sstr`, `--split-string=str`); keep its unresolved parts.
-      const field = rest.slice(0, index).find((f) => f.value.endsWith(splitString));
-      const offset = field === undefined ? 0 : field.value.length - splitString.length;
-      const spans = field === undefined ? [] : fieldSpans(field).map(([s, e]): Span => [s - offset, e - offset]);
-      const words = [...splitString.matchAll(/\S+/g)].map((match): Field => {
+      const spans = fieldSpans(splitString);
+      const words = [...splitString.value.matchAll(/\S+/g)].map((match): Field => {
         const start = match.index;
         const end = start + match[0].length;
         return { value: match[0], dynamic: spans.some(([s, e]) => s < end && start < e), quoted: false };
@@ -527,6 +603,51 @@ const launchers: Record<string, (args: Field[], call: Call) => Launch | undefine
   exec(args) {
     return { inner: args.slice(scanOptions(args, "a").index), spawns: false };
   },
+  setsid(args) {
+    return { inner: args.slice(scanOptions(args, "").index), spawns: true };
+  },
+  ionice(args) {
+    const { index, options } = scanOptions(args, "cnpPu", ["--class", "--classdata", "--pid", "--pgid", "--uid"]);
+    // `ionice -p PID` changes a running process.
+    if (options.some((o) => ["-p", "-P", "-u", "--pid", "--pgid", "--uid"].includes(o.name))) return undefined;
+    return { inner: args.slice(index), spawns: true };
+  },
+  su(args) {
+    return switchUser(args, false);
+  },
+  runuser(args) {
+    return switchUser(args, true);
+  },
+  script(args) {
+    // util-linux: `script [options] [file]`, `-c` runs a string; BSD/macOS: `script [options] file command args`.
+    const shortWithValue = "cEIOBTmotF";
+    const longWithValue = ["--command", "--echo", "--log-in", "--log-out", "--log-io", "--log-timing", "--logging-format", "--output-limit"];
+    const { index, options } = scanOptions(args, shortWithValue, longWithValue);
+    const after = args.slice(index + 1);
+    const script =
+      optionField(options, ["-c", "--command"]) ??
+      optionField(scanOptions(after, shortWithValue, longWithValue).options, ["-c", "--command"]);
+    if (script !== undefined) return { inner: [], script, spawns: true };
+    return { inner: after, spawns: true };
+  },
+  flock(args) {
+    // `flock [options] lockfile command args`, `flock [options] lockfile -c string`, or `flock [options] fd`.
+    const longWithValue = ["--timeout", "--wait", "--conflict-exit-code", "--command"];
+    const { index, options } = scanOptions(args, "wEc", longWithValue);
+    const after = args.slice(index + 1);
+    const script =
+      optionField(options, ["-c", "--command"]) ?? optionField(scanOptions(after, "c", ["--command"]).options, ["-c", "--command"]);
+    if (script !== undefined) return { inner: [], script, spawns: true };
+    return { inner: after, spawns: true };
+  },
+  watch(args) {
+    const { index, options } = scanOptions(args, "nq", ["--interval", "--equexit"]);
+    const inner = args.slice(index);
+    if (inner.length === 0) return undefined;
+    // Without `-x`, watch joins its arguments and runs them with `sh -c`.
+    if (options.some((o) => o.name === "-x" || o.name === "--exec")) return { inner, spawns: true };
+    return { inner: [], script: joinFields(inner), spawns: true };
+  },
 };
 
 /** How a shell was invoked: `bash -c '...'`, reading a script file, or reading stdin. */
@@ -578,15 +699,7 @@ function unwrap(fields: Field[], scope: Scope, ctx: Ctx, call: Call): void {
 
   if (program === "eval") {
     // eval joins its arguments with spaces and runs the result in this shell.
-    let value = "";
-    const spans: Span[] = [];
-    for (const field of args) {
-      if (value !== "") value += " ";
-      spans.push(...fieldSpans(field).map(([s, e]): Span => [s + value.length, e + value.length]));
-      value += field.value;
-    }
-    const script: Field = { value, dynamic: args.some((f) => f.dynamic), quoted: false, spans };
-    runScriptField(script, fields, call.inShell ? scope : copyScope(scope), ctx, call, via);
+    runScriptField(joinFields(args), fields, call.inShell ? scope : copyScope(scope), ctx, call, via);
     return;
   }
 
@@ -618,6 +731,10 @@ function unwrap(fields: Field[], scope: Scope, ctx: Ctx, call: Call): void {
 
   const launcher = launchers[program];
   const launch = launcher?.(args, call);
+  if (launch?.script !== undefined) {
+    runScriptField(launch.script, fields, { vars: new Map(), cwd: call.cwd }, ctx, call, via);
+    return;
+  }
   if (launch === undefined || launch.inner.length === 0) return emit(fields, scope, ctx, call);
   unwrap(launch.inner, scope, ctx, {
     ...call,

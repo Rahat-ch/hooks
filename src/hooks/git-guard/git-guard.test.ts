@@ -78,7 +78,7 @@ describe("git-guard", () => {
     });
   });
 
-  describe("sees into shell scripts and eval strings that hold unresolved variables", () => {
+  describe("sees into script strings, also when they hold unresolved variables, and through other launchers", () => {
     it.each([
       ['bash -c "git push -f $R"', /force/i],
       ['bash -c "git push origin $BRANCH --force"', /force/i],
@@ -96,11 +96,32 @@ describe("git-guard", () => {
       ["echo origin | xargs -I{} sh -c 'git push -f {}'", /force/i],
       ["find . -maxdepth 0 -exec sh -c 'git push -f \"$1\"' _ {} \\;", /force/i],
       ['find . -maxdepth 0 -exec sh -c "git reset --hard $REF" \\;', /reset --hard/],
+      // Other programs that hand a string to a shell, or run their arguments.
+      ['su -c "git push -f $R"', /force/i],
+      ["su - deploy -c 'git push -f'", /force/i],
+      ["su deploy -lc 'git push -f'", /force/i],
+      ['su --command="git reset --hard" deploy', /reset --hard/],
+      ["runuser -l deploy -c 'git push -f'", /force/i],
+      ["runuser -u deploy -- git push -f", /force/i],
+      ['script -q -c "git push -f $R" /dev/null', /force/i],
+      ["script -qc 'git reset --hard' /dev/null", /reset --hard/],
+      ["script -q /dev/null git push -f", /force/i],
+      ['flock /tmp/deploy.lock -c "git push -f $R"', /force/i],
+      ["flock -w 10 /tmp/deploy.lock git push -f", /force/i],
+      ["watch -n 5 git push -f", /force/i],
+      ['watch "git status; git push -f $R"', /force/i],
+      ["watch -x git push -f", /force/i],
+      ["setsid git push -f", /force/i],
+      ["ionice -c 3 git push -f", /force/i],
     ])("`%s`", async (command, reason) => {
       expectBlocked(await runEvent(claudeCode.bash(command)), reason);
     });
 
     it.each([
+      "su -c 'git status' deploy",
+      "script -q session.log",
+      "flock -n 9",
+      "watch -n 1 git status",
       'bash -c "git push origin $BRANCH"',
       'sh -c "git status && echo $GIT_DIR"',
       'eval "git log -n $N"',

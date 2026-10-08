@@ -72,6 +72,8 @@ describe("block-destructive-shell", () => {
       ['sudo sh -c "rm -rf /$APP"', /could expand to/],
       ['env bash -c "rm -rf $HOME/$SUB/.."', /home/],
       ['env -S "rm -rf $X/"', /could expand to/],
+      ["su -c 'rm -rf ~' root", /home/],
+      ['watch "rm -rf $X/"', /could expand to/],
       ['bash -c "X=build; rm -rf $X/"', /could expand to/],
       ["bash -c \"rm -rf '$X/'\"", /could expand to/],
       ['echo a | xargs sh -c "rm -rf $X/"', /could expand to/],
