@@ -73,7 +73,8 @@ describe("check", () => {
 
   it("truncates long failure output to the byte budget, keeping its start and end", async () => {
     const box = sandbox();
-    const noisy = "console.log('FIRST-LINE'); for (let i = 0; i < 5000; i++) console.log('noise line ' + i); console.log('LAST-LINE'); process.exit(1)";
+    // `process.exitCode`, not `process.exit()`: stdout to a pipe is asynchronous on macOS, and exiting at once drops what is unflushed.
+    const noisy = "console.log('FIRST-LINE'); for (let i = 0; i < 5000; i++) console.log('noise line ' + i); console.log('LAST-LINE'); process.exitCode = 1";
     enableCheck(box, { command: node(noisy), outputBytes: 1000 });
 
     const { reason } = expectBlocked(await box.event(claudeCode.stop()), /FIRST-LINE[\s\S]*omitted[\s\S]*LAST-LINE/);
@@ -271,7 +272,7 @@ describe("check", () => {
     it("per-edit mode caps its feedback", async () => {
       const box = sandbox();
       enableCheck(box, {
-        editCommand: node("for (let i = 0; i < 2000; i++) console.log('problem ' + i); process.exit(1)"),
+        editCommand: node("for (let i = 0; i < 2000; i++) console.log('problem ' + i); process.exitCode = 1"),
         editOutputBytes: 300,
       });
       const { context } = expectContext(await box.event(edit(box)), /problem 0[\s\S]*omitted/);
