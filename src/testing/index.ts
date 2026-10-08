@@ -18,6 +18,7 @@ import type { FixtureFile } from "./fixture-files";
 import { judge, type Verdict } from "./observe";
 import { sandboxProcessRunner } from "./sandbox";
 import { shippedFixtureFiles } from "./shipped";
+import { installWarnings } from "./install-check";
 import { loadUserCases } from "./user-cases";
 
 export { defaultCasesDir } from "./user-cases";
@@ -95,6 +96,9 @@ export async function runTests(request: TestRequest): Promise<number> {
     for (const testCase of userCases.cases) {
       print(outcome(testCase.source, testCase, await runCase(testCase, config, caseEnv, hooks)));
     }
+
+    // Warnings, not failures: CI checks out a repo where nothing is installed for the Host.
+    for (const warning of installWarnings(env, hooks, config)) stderr(`hardhooks: warning: ${warning}\n`);
 
     const count = (status: Outcome["status"]) => outcomes.filter((o) => o.status === status).length;
     stdout(`\n${count("pass")} passed, ${count("fail")} failed, ${count("skip")} skipped\n`);

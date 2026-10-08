@@ -3,15 +3,24 @@
  * case files run through the dispatcher against the resolved config, in a
  * temp project and home. Asserts only the printed report and the exit code.
  */
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Environment } from "../src/environment";
 import { defineHook, type Hook } from "../src/hooks/hook";
 import { hooks } from "../src/hooks/registry";
 import { runTests } from "../src/testing";
 import type { FixtureFile } from "../src/testing/fixture-files";
-import { fakeEnvironment, hermeticGitEnvironment, initRealGitRepo, writeRepoConfig } from "./helpers";
+import {
+  fakeBundlePath,
+  fakeEnvironment,
+  hermeticGitEnvironment,
+  initRealGitRepo,
+  runInit,
+  userSettingsPath,
+  writeRepoConfig,
+  writeSettings,
+} from "./helpers";
 
 interface TestRunOptions {
   env?: Environment;
@@ -159,6 +168,113 @@ describe("hardhooks test", () => {
     const result = await runTestCommand({ env });
     expect(result.stdout).not.toMatch(/FAIL/);
     expect(result.exitCode, result.stdout).toBe(0);
+  });
+
+  describe("install warnings", () => {
+    /** A test-only Hook like `check`: opt-in under standard, on Stop. */
+    const check = defineHook({
+      name: "check",
+      description: "test-only Stop Hook",
+      events: ["Stop"],
+      failMode: "open",
+      defaults: { standard: { enabled: false, options: {} }, strict: { enabled: true, options: {} } },
+      run: () => undefined,
+    });
+    /** A test-only Hook on Read tools, which the standard Preset's entries don't match. */
+    const reader = defineHook({
+      name: "reader",
+      description: "test-only Read Hook",
+      events: ["PreToolUse"],
+      tools: ["read"],
+      failMode: "closed",
+      defaults: { standard: { enabled: false, options: {} }, strict: { enabled: true, options: {} } },
+      run: () => undefined,
+    });
+    const withExtras = [...hooks, check, reader];
+
+    /** Run init (as the user would have) with a bundle file that exists. */
+    async function installed(options: { user?: boolean } = {}) {
+      const env = fakeEnvironment();
+      const bundlePath = fakeBundlePath(env);
+      mkdirSync(dirname(bundlePath), { recursive: true });
+      writeFileSync(bundlePath, "");
+      const init = await runInit({ env, mode: "yes", bundlePath, hooks: withExtras, ...options });
+      expect(init.exitCode, init.stderr).toBe(0);
+      return env;
+    }
+
+    it("has nothing to say right after init", async () => {
+      const env = await installed();
+      const result = await runTestCommand({ env, hooks: withExtras });
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("warns when an enabled Hook's Event isn't installed, without failing the run", async () => {
+      const env = await installed();
+      writeRepoConfig(env, { hooks: { check: { enabled: true } } });
+      const result = await runTestCommand({ env, hooks: withExtras });
+      expect(result.stderr).toMatch(/warning: check is enabled, but no hardhooks entry for Stop is installed.*run `hardhooks init`/);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("warns when the installed entry's matcher doesn't cover a newly enabled Hook's tools", async () => {
+      const env = await installed();
+      writeRepoConfig(env, { hooks: { reader: { enabled: true } } });
+      const result = await runTestCommand({ env, hooks: withExtras });
+      expect(result.stderr).toMatch(/warning: the PreToolUse entry doesn't match Read \(needed by reader\).*re-run `hardhooks init`/);
+    });
+
+    it("counts entries in the user settings and in .claude/settings.local.json", async () => {
+      const env = await installed({ user: true });
+      writeRepoConfig(env, { hooks: { check: { enabled: true } } });
+      writeSettings(join(env.cwd, ".claude", "settings.local.json"), {
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "node", args: [fakeBundlePath(env), "run", "Stop"] }] }] },
+      });
+      const result = await runTestCommand({ env, hooks: withExtras });
+      expect(result.stderr).toBe("");
+    });
+
+    it("says once when hardhooks isn't installed at all", async () => {
+      const result = await runTestCommand();
+      expect(result.stderr).toMatch(/warning: hardhooks isn't installed in any Host settings.*run `hardhooks init`/);
+      expect(result.stderr.match(/warning/g)).toHaveLength(1);
+    });
+
+    it("doesn't warn about Events when the Claude Code plugin is enabled, since it installs every Event", async () => {
+      const env = fakeEnvironment();
+      writeRepoConfig(env, { hooks: { check: { enabled: true } } });
+      writeSettings(userSettingsPath(env), { enabledPlugins: { "hardhooks@hardhooks": true } });
+      expect((await runTestCommand({ env, hooks: withExtras })).stderr).toBe("");
+
+      writeSettings(join(env.cwd, ".claude", "settings.json"), { enabledPlugins: { "hardhooks@hardhooks": false } });
+      expect((await runTestCommand({ env, hooks: withExtras })).stderr).toMatch(/isn't installed/);
+    });
+
+    it("warns when an installed entry runs a bundle that no longer exists", async () => {
+      const env = await installed();
+      rmSync(fakeBundlePath(env));
+      const result = await runTestCommand({ env, hooks: withExtras });
+      expect(result.stderr).toMatch(/warning: .*settings\.json: the hardhooks entries \([A-Za-z, ]*PreToolUse[A-Za-z, ]*\) run .*hardhooks\.mjs, which doesn't exist.*re-run `hardhooks init`/);
+      expect(result.stderr.match(/warning/g)).toHaveLength(1);
+    });
+
+    it("resolves ${CLAUDE_PROJECT_DIR} in a project install", async () => {
+      const env = fakeEnvironment();
+      const bundlePath = join(env.cwd, "node_modules", "hardhooks", "dist", "hardhooks.mjs");
+      mkdirSync(dirname(bundlePath), { recursive: true });
+      writeFileSync(bundlePath, "");
+      await runInit({ env, mode: "yes", bundlePath });
+      expect((await runTestCommand({ env })).stderr).toBe("");
+      rmSync(bundlePath);
+      expect((await runTestCommand({ env })).stderr).toMatch(/node_modules[\\/]hardhooks[\\/]dist[\\/]hardhooks\.mjs, which doesn't exist/);
+    });
+
+    it("warns about an unreadable settings file", async () => {
+      const env = fakeEnvironment();
+      writeSettings(join(env.cwd, ".claude", "settings.json"), "{ not json");
+      expect((await runTestCommand({ env })).stderr).toMatch(/warning: could not read .*settings\.json/);
+    });
   });
 
   describe("shipped fixtures that assume a config", () => {
