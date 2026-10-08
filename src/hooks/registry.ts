@@ -6,11 +6,13 @@ import type { Hook } from "./hook";
 import { blockDestructiveShell } from "./block-destructive-shell";
 import { formatOnEdit } from "./format-on-edit";
 import { gitGuard } from "./git-guard";
+import { notify } from "./notify";
 import { sessionContext } from "./session-context";
 
 export const hooks: readonly Hook<any>[] = [
   blockDestructiveShell,
   formatOnEdit,
   gitGuard,
+  notify,
   sessionContext,
 ];

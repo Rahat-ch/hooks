@@ -83,6 +83,47 @@
           },
           "additionalProperties": false
         },
+        "notify": {
+          "description": "Desktop notification when the Host needs input, or finishes a long turn.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "thresholdSeconds": {
+              "description": "Notify at Stop only when the turn ran longer than this many seconds.",
+              "type": "number",
+              "minimum": 0
+            },
+            "sound": {
+              "description": "Play the platform's notification sound with desktop notifications.",
+              "type": "boolean"
+            },
+            "webhook": {
+              "description": "Also post each notification to this webhook (opt-in).",
+              "type": "object",
+              "properties": {
+                "url": {
+                  "description": "The ntfy topic URL (e.g. https://ntfy.sh/my-topic) or Slack incoming-webhook URL.",
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "ntfy",
+                    "slack"
+                  ]
+                }
+              },
+              "required": [
+                "url",
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "session-context": {
           "description": "Tells the Host the date, git branch, dirty files and recent commits when a session starts or compacts.",
           "type": "object",

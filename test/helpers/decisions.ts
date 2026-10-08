@@ -10,6 +10,8 @@ export interface ObservedDecision {
   decision: "block" | "ask" | "allow" | "none";
   reason?: string;
   context?: string;
+  /** A terminal escape sequence (e.g. an OSC 9 notification) the Host writes to its terminal for us. */
+  terminalSequence?: string;
   /** A message shown to the user (`systemMessage`), e.g. a warning. */
   warning?: string;
 }
@@ -21,6 +23,7 @@ export function observe(result: HostResult): ObservedDecision {
   const out = JSON.parse(result.stdout) as {
     decision?: string;
     reason?: string;
+    terminalSequence?: string;
     systemMessage?: string;
     hookSpecificOutput?: {
       permissionDecision?: string;
@@ -40,6 +43,7 @@ export function observe(result: HostResult): ObservedDecision {
     if (specific.permissionDecisionReason !== undefined) observed.reason = specific.permissionDecisionReason;
   }
   if (specific.additionalContext !== undefined) observed.context = specific.additionalContext;
+  if (out.terminalSequence !== undefined) observed.terminalSequence = out.terminalSequence;
   if (out.systemMessage !== undefined) observed.warning = out.systemMessage;
   return observed;
 }
