@@ -30,6 +30,6 @@ export function loadFixtures(dir: URL): FixtureCase[] {
 
 /** Judge a dispatcher result exactly as `hardhooks test` does. */
 export function expectFixture(result: HostResult, fixture: TestCase): void {
-  const verdict = judge(result, fixture.expect);
-  expect(verdict.problems, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toEqual([]);
+  const caseResult = judge(result, fixture.expect);
+  expect(caseResult.problems, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toEqual([]);
 }

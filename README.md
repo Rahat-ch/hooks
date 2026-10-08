@@ -207,7 +207,7 @@ Runs your checks when the Host tries to stop, and blocks the stop while they fai
   3. `go vet ./...`;
   4. `cargo check`.
 
-  A detected command is announced.
+  An autodetected command is announced. Like every [Project command](#trust), it runs only once you've trusted the project.
 - **Runs:** through the platform shell (`sh -c`, or `cmd.exe` on Windows), so `npm run lint && npm test` works everywhere.
 - **Loop protection:** it honours the Host's "stop hook already active" signal and gives up after `maxBlocks` consecutive blocks. It also skips when the git working tree hasn't changed since the last pass.
 

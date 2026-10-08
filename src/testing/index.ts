@@ -18,7 +18,7 @@ import type { FixtureFile } from "./fixture-files";
 import { trustStatus } from "../trust";
 import { untrustedNote } from "../trust/command";
 import { installWarnings } from "./install-check";
-import { judge, type Verdict } from "./observe";
+import { judge, type CaseResult } from "./observe";
 import { sandboxProcessRunner } from "./sandbox";
 import { shippedFixtureFiles } from "./shipped";
 import { loadUserCases } from "./user-cases";
@@ -138,12 +138,12 @@ async function runCase(
   env: Environment,
   hooks: readonly Hook<any>[],
   trusted: boolean,
-): Promise<Verdict> {
+): Promise<CaseResult> {
   const caseEnv = testCase.hostEnv === undefined ? env : { ...env, env: { ...env.env, ...testCase.hostEnv } };
   const result = await dispatch({ event: testCase.event, payload: JSON.stringify(testCase.payload), config, env: caseEnv, hooks, trusted });
   return judge(result, testCase.expect);
 }
 
-function outcome(label: string, testCase: TestCase, verdict: Verdict): Outcome {
-  return { status: verdict.pass ? "pass" : "fail", label, name: testCase.name, detail: verdict.problems };
+function outcome(label: string, testCase: TestCase, caseResult: CaseResult): Outcome {
+  return { status: caseResult.pass ? "pass" : "fail", label, name: testCase.name, detail: caseResult.problems };
 }

@@ -3,10 +3,10 @@
  * project's check command and block the stop with the failure output while it
  * fails, so the Host can't claim "done" while checks are red.
  *
- * - The command is configured, or detected (see ./detect) and announced.
- *   A detected command, or one from the repo config, runs only in a trusted
- *   project (`hardhooks trust`, ADR-0005); otherwise the stop goes ahead
- *   unchecked and the user is told once per session.
+ * - The command is configured, or autodetected (see ./detect) and announced.
+ *   A Project command (autodetected, or set in the repo config) runs only in
+ *   a trusted project (`hardhooks trust`, ADR-0005); otherwise the stop goes
+ *   ahead unchecked and the user is told once per session.
  * - Command lines run through the platform shell, as npm runs scripts:
  *   `sh -c` on POSIX, `cmd.exe /d /s /c` on Windows. So `npm run lint && npm test`
  *   works everywhere, and `npm` resolves to npm.cmd on Windows.

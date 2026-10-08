@@ -62,7 +62,8 @@ export interface Expectation {
   readonly context?: string | undefined;
 }
 
-export interface Verdict {
+/** Whether one test case passed: its expectation against what the Host saw. */
+export interface CaseResult {
   readonly pass: boolean;
   /** What went wrong, one line each; empty when the case passed. */
   readonly problems: readonly string[];
@@ -76,7 +77,7 @@ function matches(pattern: string, text: string | undefined): boolean {
 }
 
 /** Judge one dispatcher result against an expectation. */
-export function judge(result: HostResult, expectation: Expectation): Verdict {
+export function judge(result: HostResult, expectation: Expectation): CaseResult {
   const problems: string[] = [];
   if (result.exitCode !== 0 && result.exitCode !== 2) problems.push(`exit code ${result.exitCode}`);
   let observed: ObservedDecision | undefined;

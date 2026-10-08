@@ -290,7 +290,7 @@ describe("check", () => {
       expect(existsSync(join(env.cwd, "lint-ran"))).toBe(true);
     });
 
-    it("names the detected command when it blocks", async () => {
+    it("names the autodetected Project command when it blocks", async () => {
       const env = realEnvironment();
       enableCheck(env);
       writePackageJson(env, { lint: node("console.log('2 lint errors'); process.exit(1)") });
