@@ -72,6 +72,31 @@ describe("hardhooks test", () => {
     expect(result.exitCode, result.stdout + result.stderr).toBe(0);
   });
 
+  it("runs a case as the Host it names, so asks fall back where that Host can't ask", async () => {
+    // A CURSOR_VERSION leaked from the user's terminal must not change any case's Host.
+    const env = fakeEnvironment({ env: { CURSOR_VERSION: "1.7.2" } });
+    const lease = "git push --force-with-lease origin feature";
+    writeCases(env, "hosts.json", [
+      { name: "claude-code asks", bash: lease, expect: "ask" },
+      { name: "copilot-cli asks", host: "copilot-cli", bash: lease, expect: "ask" },
+      ...["cursor", "continue-cli", "copilot-cloud", "devin-cli"].map((host) => ({
+        name: `${host} can't ask, so standard allows`,
+        host,
+        bash: lease,
+        expect: "allow",
+      })),
+    ]);
+    const result = await runTestCommand({ env });
+    expect(result.stdout).not.toMatch(/FAIL/);
+    expect(result.stdout).toMatch(/PASS\s+hosts\.json\s+devin-cli can't ask/);
+    expect(result.exitCode, result.stdout).toBe(0);
+
+    writeRepoConfig(env, { preset: "strict" });
+    writeCases(env, "hosts.json", [{ name: "strict blocks instead", host: "devin-cli", bash: lease, expect: { decision: "block", reason: "Devin CLI" } }]);
+    const strict = await runTestCommand({ env });
+    expect(strict.stdout).toMatch(/PASS\s+hosts\.json\s+strict blocks instead/);
+  });
+
   it("fails a case whose Hook is disabled, showing the expected and actual Decisions", async () => {
     const env = fakeEnvironment();
     writeRepoConfig(env, { hooks: { "git-guard": { enabled: false } } });

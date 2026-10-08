@@ -16,6 +16,7 @@
 import { resolve } from "node:path";
 import { presetNames, type PresetName } from "../config";
 import type { EventName } from "../event";
+import { hostCapabilities, type HostId } from "../hosts";
 import { eventOrder } from "../install/entries";
 import type { Expectation, ExpectedDecision } from "./observe";
 
@@ -26,7 +27,9 @@ export interface TestCase {
   readonly source: string;
   /** Passed as `hardhooks run <Event>`. */
   readonly event: EventName;
-  readonly host: string;
+  readonly host: HostId;
+  /** Environment variables the dispatcher sees for this case, so it detects `host` (env-detected Hosts only). */
+  readonly hostEnv?: Readonly<Record<string, string>> | undefined;
   /** The complete Host payload sent on stdin. */
   readonly payload: Readonly<Record<string, unknown>>;
   readonly expect: Expectation;
@@ -52,7 +55,33 @@ export interface ParseContext {
 export type ParsedCases = { readonly ok: true; readonly cases: TestCase[] } | { readonly ok: false; readonly errors: string[] };
 
 const decisions: readonly ExpectedDecision[] = ["block", "ask", "allow", "none"];
-const hosts = ["claude-code"];
+const hosts = Object.keys(hostCapabilities) as HostId[];
+
+/**
+ * What makes the dispatcher detect each Host (`detectionRules` in
+ * `src/hosts/index.ts`): fields over a built payload (`undefined` drops one),
+ * and environment variables for Hosts it detects from the environment.
+ * A complete `payload` is sent as is, so it must carry its own Host's fields.
+ */
+function hostSignals(host: HostId, cwd: string): { payload: Json; env?: Record<string, string> } {
+  const noClaudeCode = { transcript_path: undefined, permission_mode: undefined };
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  switch (host) {
+    case "claude-code":
+      return { payload: {} };
+    case "cursor":
+      return { payload: { cursor_version: "hardhooks-test", workspace_roots: [cwd] } };
+    case "continue-cli":
+      return { payload: { transcript_path: "" } };
+    case "copilot-cli":
+      return { payload: { ...noClaudeCode, timestamp } };
+    case "copilot-cloud":
+      return { payload: { ...noClaudeCode, timestamp }, env: { COPILOT_AGENT_PROMPT: "hardhooks test" } };
+    case "devin-cli":
+      // Cursor's env rule comes first, so clear a CURSOR_VERSION leaked from the user's terminal.
+      return { payload: noClaudeCode, env: { CURSOR_VERSION: "", DEVIN_PROJECT_DIR: cwd } };
+  }
+}
 
 class CaseError extends Error {}
 
@@ -164,7 +193,7 @@ function parseCase(value: unknown, context: ParseContext): Omit<TestCase, "sourc
   const name = optionalString(value, "name") ?? optionalString(value, "description");
   if (name === undefined) throw new CaseError(`"name" is required`);
 
-  const host = optionalString(value, "host") ?? "claude-code";
+  const host = (optionalString(value, "host") ?? "claude-code") as HostId;
   if (!hosts.includes(host)) throw new CaseError(`unknown "host" ${JSON.stringify(host)} (known: ${hosts.join(", ")})`);
 
   const { payload } = value;
@@ -189,17 +218,19 @@ function parseCase(value: unknown, context: ParseContext): Omit<TestCase, "sourc
     throw new CaseError(`a tool only applies to ${toolEvents.join(" and ")}, not ${event}`);
   }
 
+  const signals = hostSignals(host, cwd);
   return {
     name,
     event,
     host,
-    payload: complete ? payload! : buildPayload(event, cwd, tool, payload ?? {}),
+    ...(signals.env !== undefined ? { hostEnv: signals.env } : {}),
+    payload: complete ? payload! : buildPayload(event, cwd, tool, { ...signals.payload, ...payload }),
     expect: parseExpect(value.expect),
     ...(value.assumes !== undefined ? { assumes: parseAssumes(value.assumes) } : {}),
   };
 }
 
-/** A Claude Code payload for the Event, with the case's `payload` fields on top. */
+/** A Claude Code payload for the Event, with the Host's and then the case's `payload` fields on top. */
 function buildPayload(event: EventName, cwd: string, tool: { name: string; input: Json } | undefined, extra: Json): Json {
   return {
     session_id: "hardhooks-test",

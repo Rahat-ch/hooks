@@ -126,7 +126,8 @@ function skipReason(hook: Hook<any>, config: ResolvedConfig, testCase: TestCase)
 }
 
 async function runCase(testCase: TestCase, config: ResolvedConfig, env: Environment, hooks: readonly Hook<any>[]): Promise<Verdict> {
-  const result = await dispatch({ event: testCase.event, payload: JSON.stringify(testCase.payload), config, env, hooks });
+  const caseEnv = testCase.hostEnv === undefined ? env : { ...env, env: { ...env.env, ...testCase.hostEnv } };
+  const result = await dispatch({ event: testCase.event, payload: JSON.stringify(testCase.payload), config, env: caseEnv, hooks });
   return judge(result, testCase.expect);
 }
 
