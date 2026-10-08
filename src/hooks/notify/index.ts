@@ -1,6 +1,18 @@
 /**
  * notify (fails open): alerts the user when the Host needs them, without ever
  * delaying the Host.
+ *
+ * - Notification Event: notifies with the Host's message (except purely
+ *   informational types such as `auth_success`).
+ * - UserPromptSubmit: silently records the turn start in
+ *   `<stateDir>/notify/turns/<session id>.json` (`{"startedAt": ISO time}`).
+ * - Stop: notifies when the turn ran longer than `thresholdSeconds`.
+ *
+ * Delivery starts detached processes (see `./desktop` and `./webhook`), so
+ * the dispatcher never waits for it. With no native notifier installed it
+ * falls back to OSC 9, returned as `terminalSequence` for the Host to write.
+ * Every error is swallowed and nothing goes to stdout or stderr except that
+ * fallback sequence.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -98,7 +110,19 @@ function decide(event: HookEvent, options: Options, env: Environment): Decision 
     if (seconds === undefined || seconds <= options.thresholdSeconds) return undefined;
     return deliver({ title, body: `Finished after ${formatDuration(seconds)}` }, options, env);
   }
+  if (isInformational(event)) return undefined;
   return deliver({ title, body: event.message ?? "Needs your attention" }, options, env);
+}
+
+/**
+ * Claude Code Notification types that need nothing from the user. Read from
+ * the raw payload (escape hatch): Hosts without the field notify for everything.
+ */
+const informationalTypes = new Set(["auth_success", "elicitation_complete", "elicitation_response"]);
+
+function isInformational(event: HookEvent): boolean {
+  const type = event.payload.notification_type;
+  return typeof type === "string" && informationalTypes.has(type);
 }
 
 export const notify = defineHook({

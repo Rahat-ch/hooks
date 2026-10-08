@@ -157,6 +157,31 @@ describe("notify", () => {
     expect(await notifyWith({ sound: false })).not.toMatch(sound);
   });
 
+  it.each(["permission_prompt", "idle_prompt", "elicitation_dialog", "agent_needs_input"])(
+    "notifies for a %s Notification",
+    async (type) => {
+      const env = envWith("linux", ["notify-send"]);
+      await runEvent(claudeCode.notification("Claude needs you", { notification_type: type }), {
+        env,
+        config: notifyConfig(),
+      });
+      expect(spawns(env)).toHaveLength(1);
+    },
+  );
+
+  it.each(["auth_success", "elicitation_complete", "elicitation_response"])(
+    "stays quiet for a %s Notification, which needs nothing from the user",
+    async (type) => {
+      const env = envWith("linux", ["notify-send"]);
+      const result = await runEvent(claudeCode.notification("Done", { notification_type: type }), {
+        env,
+        config: notifyConfig(),
+      });
+      expectNoDecision(result);
+      expect(spawns(env)).toHaveLength(0);
+    },
+  );
+
   it("calls no webhook unless one is configured", async () => {
     const env = envWith("linux", ["notify-send", "curl"]);
     await runEvent(claudeCode.notification("Claude needs your permission"), { env, config: notifyConfig() });
