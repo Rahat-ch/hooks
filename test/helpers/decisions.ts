@@ -1,55 +1,13 @@
 import { expect } from "vitest";
 import type { HostResult } from "../../src/dispatcher";
+import { observe, type ObservedDecision } from "../../src/testing/observe";
 
 /**
  * What the Host would conclude from a hook's output, decoded independently of
  * our own renderer from Claude Code's documented protocol. Tests assert on
- * this, never on internals.
+ * this, never on internals. One decoder serves these tests and `hardhooks test`.
  */
-export interface ObservedDecision {
-  decision: "block" | "ask" | "allow" | "none";
-  reason?: string;
-  context?: string;
-  /** A terminal escape sequence (e.g. an OSC 9 notification) the Host writes to its terminal for us. */
-  terminalSequence?: string;
-  /**
-   * Shown to the user only (Claude Code's `systemMessage`), never to the model:
-   * Hooks' messages and the dispatcher's warnings, joined.
-   */
-  message?: string;
-}
-
-export function observe(result: HostResult): ObservedDecision {
-  if (result.exitCode === 2) return { decision: "block", reason: result.stderr };
-  if (result.stdout.trim() === "") return { decision: "none" };
-
-  const out = JSON.parse(result.stdout) as {
-    decision?: string;
-    reason?: string;
-    terminalSequence?: string;
-    systemMessage?: string;
-    hookSpecificOutput?: {
-      permissionDecision?: string;
-      permissionDecisionReason?: string;
-      additionalContext?: string;
-    };
-  };
-  const specific = out.hookSpecificOutput ?? {};
-  const observed: ObservedDecision = { decision: "none" };
-
-  if (out.decision === "block") {
-    observed.decision = "block";
-    if (out.reason !== undefined) observed.reason = out.reason;
-  } else if (specific.permissionDecision !== undefined) {
-    const map: Record<string, ObservedDecision["decision"]> = { deny: "block", ask: "ask", allow: "allow" };
-    observed.decision = map[specific.permissionDecision] ?? "none";
-    if (specific.permissionDecisionReason !== undefined) observed.reason = specific.permissionDecisionReason;
-  }
-  if (specific.additionalContext !== undefined) observed.context = specific.additionalContext;
-  if (out.terminalSequence !== undefined) observed.terminalSequence = out.terminalSequence;
-  if (out.systemMessage !== undefined) observed.message = out.systemMessage;
-  return observed;
-}
+export { observe, type ObservedDecision } from "../../src/testing/observe";
 
 /**
  * The Host proceeds without a permission Decision (its own prompts apply) but
