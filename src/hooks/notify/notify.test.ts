@@ -1,7 +1,8 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ResolvedConfig } from "../../config";
+import type { HostResult } from "../../dispatcher";
 import type { ProcessRunner } from "../../environment";
 import {
   claudeCode,
@@ -194,6 +195,38 @@ describe("notify", () => {
     const { text } = JSON.parse(body) as { text: string };
     expect(text).toContain(basename(env.cwd));
     expect(text).toContain("Claude needs your permission");
+  });
+
+  /** Exit 0 with nothing at all on stdout or stderr. */
+  function expectSilent(result: HostResult) {
+    expectNoDecision(result);
+    expect(result.stderr).toBe("");
+  }
+
+  it("swallows a delivery failure without a word to the Host", async () => {
+    const failing: ProcessRunner = {
+      run: () => Promise.reject(new Error("no")),
+      spawnDetached: () => {
+        throw new Error("spawn EACCES");
+      },
+    };
+    const env = envWith("linux", ["notify-send"], { processRunner: failing });
+    const config = notifyConfig({ webhook: { kind: "ntfy", url: "https://ntfy.sh/t" } });
+    expectSilent(await runEvent(claudeCode.notification("Claude needs your permission"), { env, config }));
+  });
+
+  it("swallows an unwritable state directory and an unreadable turn record", async () => {
+    const env = envWith("linux", ["notify-send"]);
+    rmSync(env.stateDir, { recursive: true });
+    writeFileSync(env.stateDir, "not a directory");
+    expectSilent(await turnLasting(45, env));
+
+    const corrupt = envWith("linux", ["notify-send"]);
+    expectSilent(await turnLasting(1, corrupt));
+    const [file] = readdirSync(join(corrupt.stateDir, "notify", "turns"));
+    writeFileSync(join(corrupt.stateDir, "notify", "turns", file!), "{oops");
+    expectSilent(await runEvent(claudeCode.stop(), { env: corrupt, config: notifyConfig() }));
+    expect(spawns(corrupt)).toHaveLength(0);
   });
 
   it.each([

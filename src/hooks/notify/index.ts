@@ -78,6 +78,20 @@ function deliver(notification: Notification, options: Options, env: Environment)
   return native ? undefined : terminalSequence(osc9(notification));
 }
 
+function decide(event: HookEvent, options: Options, env: Environment): Decision | undefined {
+  const title = basename(event.cwd);
+  if (event.name === "UserPromptSubmit") {
+    recordTurnStart(event, env);
+    return undefined;
+  }
+  if (event.name === "Stop") {
+    const seconds = turnSeconds(event, env);
+    if (seconds === undefined || seconds <= options.thresholdSeconds) return undefined;
+    return deliver({ title, body: `Finished after ${Math.round(seconds)}s` }, options, env);
+  }
+  return deliver({ title, body: event.message ?? "Needs your attention" }, options, env);
+}
+
 export const notify = defineHook({
   name: "notify",
   description: "Desktop notification when the Host needs input, or finishes a long turn.",
@@ -89,16 +103,12 @@ export const notify = defineHook({
     strict: { enabled: true, options: { thresholdSeconds: 30, sound: true } },
   },
   run(event, options, env) {
-    const title = basename(event.cwd);
-    if (event.name === "UserPromptSubmit") {
-      recordTurnStart(event, env);
+    try {
+      return decide(event, options, env);
+    } catch {
+      // A notifier must never bother the Host, not even on stderr (ADR-0004).
       return undefined;
     }
-    if (event.name === "Stop") {
-      const seconds = turnSeconds(event, env);
-      if (seconds === undefined || seconds <= options.thresholdSeconds) return undefined;
-      return deliver({ title, body: `Finished after ${Math.round(seconds)}s` }, options, env);
-    }
-    return deliver({ title, body: event.message ?? "Needs your attention" }, options, env);
   },
 });
+
