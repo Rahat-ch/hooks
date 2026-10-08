@@ -32,6 +32,25 @@ commands:
                                       remove the entries init wrote
 `;
 
+/**
+ * The exit status of a process killed by SIGPIPE (128 + 13), which is what a
+ * C program reports in `hardhooks test | head -1`. Not 0, so a pipeline under
+ * `set -o pipefail` still sees that the output was cut short.
+ */
+const SIGPIPE_EXIT = 141;
+
+/**
+ * A reader that closes our stdout or stderr early (`| head -1`) makes the next
+ * write fail with EPIPE, which Node raises as an unhandled 'error' event with a
+ * stack. Nobody is left to read, so end quietly instead, for every command.
+ */
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE") process.exit(SIGPIPE_EXIT);
+    throw error;
+  });
+}
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
   const chunks: Buffer[] = [];

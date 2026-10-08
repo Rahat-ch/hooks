@@ -4,7 +4,7 @@
  * (`npm run test:smoke` does both). Keep this set small; behaviour belongs in
  * dispatcher-seam tests.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { tmpdir } from "node:os";
@@ -158,6 +158,30 @@ describe("hardhooks CLI (bundled)", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe("");
   });
+
+  // POSIX: `hardhooks init --dry-run | head -1`. Windows pipes report closed readers differently.
+  it.skipIf(process.platform === "win32")(
+    "ends quietly with 141 (128 + SIGPIPE) when the reader closes its output pipe early",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "hardhooks-smoke-"));
+      try {
+        const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, XDG_CONFIG_HOME: join(root, "config") };
+        delete env.CLAUDE_CONFIG_DIR;
+        for (const args of [["init", "--dry-run"], ["test"]]) {
+          const child = spawn(process.execPath, [bundle, ...args], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+          // Close the read end before the CLI writes anything, as `head` does once it has its line.
+          child.stdout.destroy();
+          let stderr = "";
+          child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+          const status = await new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+          expect(stderr, args.join(" ")).not.toMatch(/EPIPE|internal error|\n\s+at /);
+          expect(status, args.join(" ")).toBe(141);
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("prints usage and exits 1 for an unknown command", () => {
     const result = hardhooks(["frobnicate"], "");
