@@ -1,0 +1,32 @@
+{
+  "name": "hardhooks",
+  "version": "0.0.0",
+  "description": "Deterministic guardrails for nondeterministic agents: tested, configurable hooks for AI coding agents.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "hardhooks": "dist/hardhooks.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --project unit",
+    "test:smoke": "npm run build && vitest run --project smoke",
+    "check": "npm run typecheck && npm test && npm run test:smoke"
+  },
+  "dependencies": {
+    "unbash": "5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "tsup": "8.5.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}
