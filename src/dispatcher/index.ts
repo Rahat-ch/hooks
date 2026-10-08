@@ -8,7 +8,7 @@ import { formatConfigError, loadConfig, type ConfigError } from "../config/load"
 import { block, combineDecisions, type HookDecision, type Outcome } from "../decision";
 import type { Environment } from "../environment";
 import type { EventName, HookEvent } from "../event";
-import type { Hook } from "../hooks/hook";
+import type { Hook, HookRun } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
 import { parseClaudeCodePayload, renderClaudeCodeOutput } from "../hosts/claude-code";
 import { capabilitiesOf } from "../hosts";
@@ -54,6 +54,30 @@ function withTimeout<T>(promise: Promise<T>, ms: number | undefined): Promise<T>
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * Call `fn` in a microtask, timing the call itself. Hooks start one after
+ * another, so timing the `await` around them would charge a synchronous Hook
+ * for the Hooks after it; a Promise is timed until it settles.
+ */
+function timed<T>(fn: () => T | Promise<T>): { promise: Promise<T>; elapsed(): number } {
+  let start: number | undefined;
+  let end: number | undefined;
+  const promise = Promise.resolve().then(() => {
+    start = performance.now();
+    let value: T | Promise<T>;
+    try {
+      value = fn();
+    } catch (error) {
+      end = performance.now();
+      throw error;
+    }
+    if (value instanceof Promise) return value.finally(() => void (end = performance.now()));
+    end = performance.now();
+    return value;
+  });
+  return { promise, elapsed: () => (start === undefined ? 0 : (end ?? performance.now()) - start) };
+}
+
 /** Whether a Hook handles this Event's tool (every Hook handles tool-less Events). */
 function handlesTool(hook: Hook<any>, event: HookEvent): boolean {
   return event.tool === undefined || hook.tools === undefined || hook.tools.includes(event.tool.kind);
@@ -71,6 +95,7 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
   // Fast path: the plugin's static hooks file calls us for every Event.
   if (enabled.length === 0) return { stdout: "", stderr: "", exitCode: 0 };
 
+  const started = performance.now();
   const stderr: string[] = [];
   let event: HookEvent;
   try {
@@ -85,32 +110,43 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
 
   const selected = enabled.filter((hook) => handlesTool(hook, event));
 
-  const results = await Promise.all(
-    selected.map(async (hook): Promise<HookDecision | undefined> => {
+  const runs = await Promise.all(
+    selected.map(async (hook): Promise<HookRun> => {
+      const call = timed(() => hook.run(event, hookSettings(hook, config).options, env));
       try {
         const decision = await withTimeout(
-          Promise.resolve().then(() => hook.run(event, hookSettings(hook, config).options, env)),
+          call.promise,
           hook.timeoutMs ?? (hook.failMode === "closed" ? GUARD_TIMEOUT_MS : undefined),
         );
-        return decision === undefined ? undefined : { hook: hook.name, decision };
+        return { hook: hook.name, decision, durationMs: call.elapsed() };
       } catch (error) {
+        const durationMs = call.elapsed();
         if (hook.failMode === "closed") {
-          return { hook: hook.name, decision: block(`${hook.name} failed, so it blocked to be safe: ${errorMessage(error)}`) };
+          const decision = block(`${hook.name} failed, so it blocked to be safe: ${errorMessage(error)}`);
+          return { hook: hook.name, decision, error: errorMessage(error), durationMs };
         }
         stderr.push(`hardhooks: ${hook.name} failed (ignored): ${errorMessage(error)}`);
-        return undefined;
+        return { hook: hook.name, decision: undefined, error: errorMessage(error), durationMs };
       }
     }),
   );
 
-  const outcome = askFallback(
-    eventName,
-    combineDecisions(results.filter((r): r is HookDecision => r !== undefined)),
-    event.host,
-    config.preset,
-  );
+  const decisions = runs.flatMap(({ hook, decision }): HookDecision[] => (decision ? [{ hook, decision }] : []));
+  const outcome = askFallback(eventName, combineDecisions(decisions), event.host, config.preset);
   if (outcome.warning !== undefined) stderr.push(`hardhooks: ${outcome.warning}`);
-  return render(eventName, outcome, stderr);
+  const result = render(eventName, outcome, stderr);
+
+  // Observers (audit-log) see the final result; they can't change it, and their errors are ignored.
+  const record = { event, config, runs, result, durationMs: performance.now() - started };
+  for (const hook of selected) {
+    if (hook.observe === undefined) continue;
+    try {
+      await hook.observe(record, hookSettings(hook, config).options, env);
+    } catch {
+      // Fail open, silently: an observer never changes what the Host sees.
+    }
+  }
+  return result;
 }
 
 /**

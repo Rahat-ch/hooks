@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config";
 import { addContext, allow, ask, block, message, terminalSequence, type Decision } from "../src/decision";
 import type { EventName, ToolKind } from "../src/event";
-import { defineHook, type Hook } from "../src/hooks/hook";
+import { defineHook, type DispatchRecord, type Hook } from "../src/hooks/hook";
 import {
   claudeCode,
   expectAllowedWithWarning,
@@ -206,6 +206,77 @@ describe("dispatcher", () => {
       const result = await runEvent(bash, { hooks });
       expectAsked(result, /confirm/);
       expect(result.stderr).toMatch(/slow-formatter[\s\S]*timed out/);
+    });
+  });
+
+  describe("observers", () => {
+    function observer(records: DispatchRecord[], behave: () => void = () => {}): Hook<Record<string, never>> {
+      return defineHook({
+        ...testHook("observer", () => undefined),
+        observe: (record) => {
+          records.push(record);
+          behave();
+        },
+      });
+    }
+
+    it("see every selected Hook's Decision and timing, and the Host output, after the Decision is final", async () => {
+      const records: DispatchRecord[] = [];
+      const result = await runEvent(bash, {
+        hooks: [
+          testHook("blocker", () => block("no")),
+          testHook("silent", () => undefined),
+          testHook("broken", () => { throw new Error("kaboom"); }),
+          observer(records),
+        ],
+      });
+      expectBlocked(result, /no/);
+      expect(records).toHaveLength(1);
+      const [record] = records;
+      expect(record!.event.tool?.command).toBe("echo hi");
+      expect(record!.result).toEqual(result);
+      expect(record!.runs.map(({ hook, decision, error }) => ({ hook, decision, error }))).toEqual([
+        { hook: "blocker", decision: block("no"), error: undefined },
+        { hook: "silent", decision: undefined, error: undefined },
+        { hook: "broken", decision: undefined, error: "kaboom" },
+        { hook: "observer", decision: undefined, error: undefined },
+      ]);
+      for (const run of record!.runs) expect(run.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("time each Hook on its own, not including the other Hooks' work", async () => {
+      const records: DispatchRecord[] = [];
+      const busy = (ms: number) => {
+        const until = performance.now() + ms;
+        while (performance.now() < until) {}
+        return undefined;
+      };
+      await runEvent(bash, {
+        hooks: [
+          testHook("slow-sync", () => busy(40)),
+          testHook("fast", () => undefined),
+          testHook("slow-async", () => new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 40))),
+          observer(records),
+        ],
+      });
+      const ms = Object.fromEntries(records[0]!.runs.map((run) => [run.hook, run.durationMs]));
+      expect(ms["slow-sync"]).toBeGreaterThanOrEqual(39);
+      expect(ms.fast).toBeLessThan(20);
+      expect(ms["slow-async"]).toBeGreaterThanOrEqual(35);
+    });
+
+    it("can't change what the Host sees, even by throwing", async () => {
+      const result = await runEvent(bash, {
+        hooks: [testHook("asker", () => ask("confirm")), observer([], () => { throw new Error("disk full"); })],
+      });
+      expectAsked(result, /confirm/);
+      expect(result.stderr).toBe("");
+    });
+
+    it("only observe Events they were selected for", async () => {
+      const records: DispatchRecord[] = [];
+      await runEvent(claudeCode.stop(), { hooks: [observer(records), testHook("stopper", () => block("x"), { events: ["Stop"] })] });
+      expect(records).toEqual([]);
     });
   });
 
