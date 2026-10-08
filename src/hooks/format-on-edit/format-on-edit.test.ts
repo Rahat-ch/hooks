@@ -9,11 +9,21 @@ import {
   expectNoDecision,
   fakeEnvironment,
   loadFixtures,
+  expectMessage,
+  observe,
   recordingProcessRunner,
-  runEvent,
+  runEvent as dispatchEvent,
+  runTrust,
   writeRepoConfig,
+  writeUserConfig,
   type FakeEnvironmentOptions,
 } from "../../../test/helpers";
+
+/**
+ * These tests are about formatting, so the project is trusted (ADR-0005).
+ * "in an untrusted project" below uses the real trust lookup.
+ */
+const runEvent: typeof dispatchEvent = (payload, options = {}) => dispatchEvent(payload, { trusted: true, ...options });
 
 const repoPrettier = fileURLToPath(new URL("../../../node_modules/prettier", import.meta.url));
 
@@ -301,6 +311,53 @@ describe("format-on-edit", () => {
       expect(result.stderr).toBe("");
       expect(runner.runs).toHaveLength(1);
       expect(read(file)).toBe("x=(\n");
+    });
+  });
+
+  describe("in an untrusted project", () => {
+    it.each<{ formatter: string; files: Record<string, string>; file: string }>([
+      {
+        formatter: "prettier",
+        files: { ".prettierrc": "{}", "node_modules/prettier/package.json": JSON.stringify({ bin: "./bin/prettier.cjs" }) },
+        file: "a.ts",
+      },
+      // On PATH, but the project's config chooses it (and prettier config can load plugins).
+      { formatter: "prettier", files: { ".prettierrc": JSON.stringify({ plugins: ["./evil.js"] }) }, file: "a.ts" },
+      { formatter: "gofmt", files: { "go.mod": "module example.com/demo\n" }, file: "main.go" },
+    ])("does not run $formatter, and tells the user once per session", async ({ formatter, files, file }) => {
+      const runner = recordingProcessRunner();
+      const env = project({ ...files, [file]: "x\n" }, { processRunner: runner });
+      const path = join(env.cwd, file);
+
+      const first = await dispatchEvent(writePayload(path), { env });
+      const second = await dispatchEvent(writePayload(path), { env });
+
+      expect(runner.runs).toEqual([]);
+      expectMessage(first, new RegExp(`format-on-edit\\] skipped ${formatter}: this project is not trusted.*hardhooks trust`));
+      expect(observe(first).decision).toBe("none");
+      expectNoDecision(second);
+    });
+
+    it("does not run a `command` from the repo config, but does run the user config's", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ "a.ts": "x\n" }, { processRunner: runner });
+      writeRepoConfig(env, { hooks: { "format-on-edit": { command: ["./evil.sh"] } } });
+
+      expectMessage(await dispatchEvent(writePayload(join(env.cwd, "a.ts")), { env }), /format-on-edit\.command from \.hardhooks\.json/);
+      expect(runner.runs).toEqual([]);
+
+      writeUserConfig(env, { hooks: { "format-on-edit": { command: ["dprint", "fmt"] } } });
+      await dispatchEvent(writePayload(join(env.cwd, "a.ts")), { env });
+      expect(runner.runs.map((r) => r.command)).toEqual(["dprint"]);
+    });
+
+    it("formats once the user trusts the project", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ "go.mod": "module example.com/demo\n", "main.go": "x\n" }, { processRunner: runner });
+      await runTrust({ env, mode: "yes" });
+
+      expectNoDecision(await dispatchEvent(writePayload(join(env.cwd, "main.go")), { env }));
+      expect(runner.runs.map((r) => r.command)).toEqual(["gofmt"]);
     });
   });
 

@@ -7,3 +7,4 @@ export * from "./install";
 export * from "./payloads";
 export * from "./real-git-repo";
 export * from "./run";
+export * from "./trust";

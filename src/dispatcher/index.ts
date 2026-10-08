@@ -5,13 +5,14 @@
  */
 import { hookSettings, type PresetName, type ResolvedConfig } from "../config";
 import { formatConfigError, loadConfig, type ConfigError } from "../config/load";
-import { block, combineDecisions, type HookDecision, type Outcome } from "../decision";
+import { block, combineDecisions, message, type HookDecision, type Outcome } from "../decision";
 import type { Environment } from "../environment";
 import type { EventName, HookEvent } from "../event";
 import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
 import { parseClaudeCodePayload, renderClaudeCodeOutput } from "../hosts/claude-code";
 import { capabilitiesOf } from "../hosts";
+import { noticeDue, trustStatus, untrustedReason, type TrustStatus } from "../trust";
 
 export interface DispatchRequest {
   /** The Event named on the command line: `hardhooks run <Event>`. */
@@ -26,6 +27,11 @@ export interface DispatchRequest {
   env: Environment;
   /** Hooks to consider. Defaults to the built-in registry; tests may inject their own. */
   hooks?: readonly Hook<any>[];
+  /**
+   * Whether the project's own commands may run (ADR-0005). Omit to look it up
+   * as `hardhooks trust` recorded it in `env.stateDir`, for the Event's project.
+   */
+  trusted?: boolean;
 }
 
 /** What the Host sees: stdout, stderr and the process exit code. */
@@ -84,33 +90,65 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
   }
 
   const selected = enabled.filter((hook) => handlesTool(hook, event));
+  const trust = lazyTrust(request, event);
 
   const results = await Promise.all(
-    selected.map(async (hook): Promise<HookDecision | undefined> => {
+    selected.map(async (hook): Promise<HookDecision[]> => {
+      const skipped: string[] = [];
+      let settings = hookSettings(hook, config);
+      const withheld = config.repoCommands?.[hook.name] ?? [];
+      if (withheld.length > 0 && !trust.trusted()) {
+        settings = hookSettings(hook, { preset: config.preset, hooks: config.untrustedHooks ?? {} });
+        skipped.push(...withheld.map((option) => `${hook.name}.${option} from .hardhooks.json`));
+      }
+      const projectTrust = {
+        mayRun(what: string) {
+          if (trust.trusted()) return true;
+          skipped.push(what);
+          return false;
+        },
+      };
+      const decisions: HookDecision[] = [];
       try {
         const decision = await withTimeout(
-          Promise.resolve().then(() => hook.run(event, hookSettings(hook, config).options, env)),
+          Promise.resolve().then(() => hook.run(event, settings.options, env, projectTrust)),
           hook.timeoutMs ?? (hook.failMode === "closed" ? GUARD_TIMEOUT_MS : undefined),
         );
-        return decision === undefined ? undefined : { hook: hook.name, decision };
+        if (decision !== undefined) decisions.push({ hook: hook.name, decision });
       } catch (error) {
         if (hook.failMode === "closed") {
-          return { hook: hook.name, decision: block(`${hook.name} failed, so it blocked to be safe: ${errorMessage(error)}`) };
+          return [{ hook: hook.name, decision: block(`${hook.name} failed, so it blocked to be safe: ${errorMessage(error)}`) }];
         }
         stderr.push(`hardhooks: ${hook.name} failed (ignored): ${errorMessage(error)}`);
-        return undefined;
       }
+      if (skipped.length > 0 && noticeDue(env, trust.status().root, event.sessionId, hook.name)) {
+        decisions.push({ hook: hook.name, decision: message(`skipped ${skipped.join(", ")}: ${untrustedReason(trust.status())}.`) });
+      }
+      return decisions;
     }),
   );
 
   const outcome = askFallback(
     eventName,
-    combineDecisions(results.filter((r): r is HookDecision => r !== undefined)),
+    combineDecisions(results.flat()),
     event.host,
     config.preset,
   );
   if (outcome.warning !== undefined) stderr.push(`hardhooks: ${outcome.warning}`);
   return render(eventName, outcome, stderr);
+}
+
+/**
+ * The Event's project trust (ADR-0005), looked up at most once and only when
+ * a Hook needs it, so Events without project commands pay nothing.
+ */
+function lazyTrust(request: DispatchRequest, event: HookEvent) {
+  let status: TrustStatus | undefined;
+  const lookup = () => (status ??= trustStatus(request.env, event.cwd));
+  return {
+    trusted: () => request.trusted ?? lookup().state === "trusted",
+    status: lookup,
+  };
 }
 
 /**

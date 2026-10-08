@@ -4,6 +4,7 @@ import {
   commit,
   expectContext,
   expectFixture,
+  expectMessage,
   expectNoDecision,
   fakeEnvironment,
   git,
@@ -114,8 +115,20 @@ describe("session-context", () => {
     const command = [process.execPath, "-e", "console.log('Open pull requests: 3')"];
     writeRepoConfig(env, { hooks: { "session-context": { commands: [command] } } });
 
-    const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);
+    const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env, trusted: true }), /2026-03-14/);
     expect(context).toContain("Open pull requests: 3");
+  });
+
+  it("in an untrusted project, leaves out the repo config's commands and tells the user, still adding the rest", async () => {
+    const env = fakeEnvironment({ now, processRunner: "real" });
+    const command = [process.execPath, "-e", "console.log('Open pull requests: 3')"];
+    writeRepoConfig(env, { hooks: { "session-context": { commands: [command] } } });
+
+    const result = await runEvent(claudeCode.sessionStart("startup"), { env });
+
+    const { context } = expectContext(result, /2026-03-14/);
+    expect(context).not.toContain("Open pull requests");
+    expectMessage(result, /session-context\] skipped session-context\.commands from \.hardhooks\.json: this project is not trusted/);
   });
 
   it("keeps long extras within the budget, after the git summary, even in a busy repo", async () => {
@@ -127,7 +140,7 @@ describe("session-context", () => {
     const longOutput = [process.execPath, "-e", "console.log('x'.repeat(5000))"];
     writeRepoConfig(env, { hooks: { "session-context": { files: ["NOTES.md"], commands: [longOutput] } } });
 
-    const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);
+    const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env, trusted: true }), /2026-03-14/);
     expect(Buffer.byteLength(context!, "utf8")).toBeLessThanOrEqual(1024);
     // 300 files plus NOTES.md and .hardhooks.json.
     expect(context).toMatch(/Branch: main[\s\S]*302 uncommitted[\s\S]*Commit number 1[\s\S]*NOTES\.md:\nRelease notes/);
@@ -155,7 +168,7 @@ describe("session-context", () => {
     });
     writeRepoConfig(env, { hooks: { "session-context": { commands: [["gh", "pr", "list"]] } } });
 
-    const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);
+    const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env, trusted: true }), /2026-03-14/);
     expect(context).toMatch(/gh pr list: \(could not run/);
   });
 });

@@ -142,6 +142,7 @@ export const sessionContext = defineHook({
   events: ["SessionStart"],
   failMode: "open",
   optionsSchema,
+  commandOptions: ["commands"],
   defaults: {
     standard: { enabled: true, options: { files: [], commands: [] } },
     strict: { enabled: true, options: { files: [], commands: [] } },

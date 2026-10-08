@@ -24,6 +24,8 @@ interface Invocation {
   command: string;
   args: string[];
   cwd: string;
+  /** The detected formatter's name; undefined for the configured `command`. */
+  detected?: string;
 }
 
 /** A program to run, possibly behind a prefix (e.g. `node <script>`). */
@@ -33,6 +35,8 @@ interface Program {
 }
 
 interface Formatter {
+  /** For the untrusted-project notice, e.g. "prettier". */
+  name: string;
   /** File extensions (lower case, with the dot) it formats. */
   extensions: ReadonlySet<string>;
   /** Whether `dir` holds this formatter's project config. */
@@ -145,31 +149,37 @@ const run = (program: Program, ...args: string[]) => ({ command: program.command
  */
 const formatters: readonly Formatter[] = [
   {
+    name: "prettier",
     extensions: exts(`${scriptExts} json json5 jsonc css scss less html htm vue md markdown mdx yaml yml graphql gql hbs handlebars`),
     configuredIn: (dir) => anyExists(dir, prettierConfigs) || readJson(join(dir, "package.json"))?.prettier !== undefined,
     invocation: (file, where) => run(nodeTool(where, "prettier", "prettier"), "--write", "--ignore-unknown", file),
   },
   {
+    name: "biome",
     extensions: exts(`${scriptExts} json jsonc css graphql gql`),
     configuredIn: (dir) => anyExists(dir, ["biome.json", "biome.jsonc"]),
     invocation: (file, where) => run(nodeTool(where, "@biomejs/biome", "biome"), "format", "--write", file),
   },
   {
+    name: "ruff",
     extensions: exts("py pyi"),
     configuredIn: (dir) => anyExists(dir, ["ruff.toml", ".ruff.toml"]) || pyprojectHasTool(dir, "ruff"),
     invocation: (file, where) => run(pythonTool(where, "ruff"), "format", "--force-exclude", file),
   },
   {
+    name: "black",
     extensions: exts("py pyi"),
     configuredIn: (dir) => pyprojectHasTool(dir, "black"),
     invocation: (file, where) => run(pythonTool(where, "black"), "--quiet", file),
   },
   {
+    name: "gofmt",
     extensions: exts("go"),
     configuredIn: (dir) => anyExists(dir, ["go.mod"]),
     invocation: (file) => ({ command: "gofmt", args: ["-w", file] }),
   },
   {
+    name: "rustfmt",
     extensions: exts("rs"),
     configuredIn: (dir) => anyExists(dir, ["rustfmt.toml", ".rustfmt.toml", "Cargo.toml"]),
     invocation: (file, where) => {
@@ -178,6 +188,7 @@ const formatters: readonly Formatter[] = [
     },
   },
   {
+    name: "dprint",
     // dprint decides by its plugins; these are the file types its common plugins cover.
     extensions: exts(`${scriptExts} json jsonc json5 md markdown mdx toml css scss less sass html htm vue svelte astro yaml yml graphql gql`),
     configuredIn: (dir) => anyExists(dir, ["dprint.json", ".dprint.json", "dprint.jsonc", ".dprint.jsonc"]),
@@ -194,7 +205,9 @@ function detect(file: string, platform: NodeJS.Platform): Invocation | undefined
   const dirs = searchDirs(file);
   for (const dir of dirs) {
     const formatter = candidates.find((candidate) => candidate.configuredIn(dir));
-    if (formatter !== undefined) return { ...formatter.invocation(file, { dirs, platform }, dir), cwd: dir };
+    if (formatter !== undefined) {
+      return { ...formatter.invocation(file, { dirs, platform }, dir), cwd: dir, detected: formatter.name };
+    }
   }
   return undefined;
 }
@@ -226,11 +239,12 @@ export const formatOnEdit = defineHook({
       description: "Give up on the formatter after this many milliseconds, leaving the file as it is.",
     }),
   }),
+  commandOptions: ["command"],
   defaults: {
     standard: { enabled: true, options: { timeoutMs: 10_000 } },
     strict: { enabled: true, options: { timeoutMs: 10_000 } },
   },
-  async run(event, options, env) {
+  async run(event, options, env, trust) {
     const filePath = event.tool?.filePath;
     if (filePath === undefined) return undefined;
     const file = resolve(event.cwd, filePath);
@@ -240,6 +254,8 @@ export const formatOnEdit = defineHook({
         ? configured(options.command, file, event.cwd)
         : detect(file, env.platform);
     if (invocation === undefined) return undefined;
+    // Every detected formatter needs trust, even one on PATH: the project's config chose it and can load plugins.
+    if (invocation.detected !== undefined && !trust.mayRun(invocation.detected)) return undefined;
     // Whatever happens (non-zero exit, timeout, not installed), the file is simply left as it is.
     await env.processRunner.run(invocation.command, invocation.args, {
       cwd: invocation.cwd,

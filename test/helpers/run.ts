@@ -18,6 +18,11 @@ export interface RunEventOptions {
   hooks?: readonly Hook<any>[];
   /** Event name passed as `hardhooks run <Event>`. Defaults to the payload's hook_event_name. */
   event?: string;
+  /**
+   * Whether the project's own commands may run (ADR-0005). Omit to look it up
+   * as `hardhooks trust` recorded it: a fresh environment is untrusted.
+   */
+  trusted?: boolean;
 }
 
 /**
@@ -36,5 +41,6 @@ export async function runEvent(payload: ClaudeCodePayload | string, options: Run
     env,
     ...(options.config ? { config: options.config } : {}),
     ...(options.hooks ? { hooks: options.hooks } : {}),
+    ...(options.trusted !== undefined ? { trusted: options.trusted } : {}),
   });
 }

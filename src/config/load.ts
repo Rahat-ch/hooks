@@ -170,11 +170,34 @@ export function loadConfig(env: Environment, hooks: readonly Hook<any>[]): Loade
 
   // Lowest precedence first.
   const layers = files.flatMap((f) => (f && "config" in f ? [f.config] : []));
-  let preset: PresetName = "standard";
+  const preset = layers.reduce<PresetName>((p, layer) => layer.preset ?? p, "standard");
+  const merged = mergeLayers(layers.map(overridesFrom));
+
+  // ADR-0005: the repo config's command options apply only in a trusted project.
+  const repo = files[1] && "config" in files[1] ? files[1].config : undefined;
+  const repoCommands: Record<string, string[]> = {};
+  for (const hook of hooks) {
+    const entry = repo?.hooks?.[hook.name];
+    const set = (hook.commandOptions ?? []).filter((option) => entry?.[option] !== undefined);
+    if (set.length > 0) repoCommands[hook.name] = set;
+  }
+  if (Object.keys(repoCommands).length === 0) return { ok: true, config: { preset, hooks: merged } };
+
+  const withheld = layers.map(overridesFrom);
+  const repoLayer = repo === undefined ? undefined : withheld[withheld.length - 1];
+  for (const [name, options] of Object.entries(repoCommands)) {
+    const entry = repoLayer?.[name];
+    if (entry?.options === undefined) continue;
+    entry.options = Object.fromEntries(Object.entries(entry.options).filter(([key]) => !options.includes(key)));
+  }
+  return { ok: true, config: { preset, hooks: merged, repoCommands, untrustedHooks: mergeLayers(withheld) } };
+}
+
+/** Merge per-Hook overrides, lowest precedence first: `enabled` and each option from the highest layer that sets it. */
+function mergeLayers(layers: readonly Record<string, HookOverrides>[]): Record<string, HookOverrides> {
   const merged: Record<string, HookOverrides> = {};
   for (const layer of layers) {
-    if (layer.preset !== undefined) preset = layer.preset;
-    for (const [name, overrides] of Object.entries(overridesFrom(layer))) {
+    for (const [name, overrides] of Object.entries(layer)) {
       const below = merged[name];
       const enabled = overrides.enabled ?? below?.enabled;
       merged[name] = {
@@ -183,5 +206,5 @@ export function loadConfig(env: Environment, hooks: readonly Hook<any>[]): Loade
       };
     }
   }
-  return { ok: true, config: { preset, hooks: merged } };
+  return merged;
 }

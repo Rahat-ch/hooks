@@ -22,7 +22,7 @@ import { addContext, block, message, type Decision } from "../../decision";
 import type { Environment, ProcessResult } from "../../environment";
 import type { HookEvent } from "../../event";
 import { workingTreeFingerprint } from "../../git/fingerprint";
-import { defineHook } from "../hook";
+import { defineHook, type ProjectTrust } from "../hook";
 import { detectCommand } from "./detect";
 import { truncateOutput } from "./output";
 import { CheckState } from "./state";
@@ -98,11 +98,13 @@ function noAnswer(result: ProcessResult, chosen: string, timeoutSeconds: number,
 
 const output = (result: ProcessResult, budget: number) => truncateOutput(`${result.stdout}\n${result.stderr}`, budget);
 
-async function onStop(event: HookEvent, options: CheckOptions, env: Environment): Promise<Decision | undefined> {
+async function onStop(event: HookEvent, options: CheckOptions, env: Environment, trust: ProjectTrust): Promise<Decision | undefined> {
   const detected = options.command === undefined ? detectCommand(event.cwd) : undefined;
   const command = options.command ?? detected?.command;
   if (command === undefined) return undefined;
   const chosen = detected ? `\`${command}\` (detected from ${detected.source})` : `\`${command}\``;
+  // A configured command comes from the user config or a trusted repo config; the dispatcher withholds the rest.
+  if (detected && !trust.mayRun(chosen)) return undefined;
 
   const state = new CheckState(join(env.stateDir, "check"));
   const session = event.sessionId ?? "";
@@ -165,13 +167,14 @@ export const check = defineHook<CheckOptions>({
   tools: ["edit", "write"],
   failMode: "open",
   optionsSchema,
+  commandOptions: ["command", "editCommand"],
   defaults: {
     standard: { enabled: false, options: presetOptions },
     strict: { enabled: true, options: presetOptions },
   },
-  run(event, options, env) {
-    if (event.name === "Stop") return onStop(event, options, env);
-    if (event.name === "SubagentStop") return options.subagentStop ? onStop(event, options, env) : undefined;
+  run(event, options, env, trust) {
+    if (event.name === "Stop") return onStop(event, options, env, trust);
+    if (event.name === "SubagentStop") return options.subagentStop ? onStop(event, options, env, trust) : undefined;
     if (event.name === "PostToolUse") return onEdit(event, options, env);
     return undefined;
   },

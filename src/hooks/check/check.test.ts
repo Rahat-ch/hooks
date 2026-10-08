@@ -10,7 +10,7 @@ import {
   expectNoDecision,
   fakeEnvironment,
   observe,
-  runEvent,
+  runEvent as dispatchEvent,
   writeRepoConfig,
   type FakeEnvironment,
 } from "../../../test/helpers";
@@ -21,6 +21,12 @@ import {
  * `&&`, which mean the same in both.
  */
 const node = (script: string) => `node -e "${script}"`;
+
+/**
+ * These tests are about check itself, so the project is trusted (ADR-0005).
+ * "in an untrusted project" below uses the real trust lookup.
+ */
+const runEvent: typeof dispatchEvent = (payload, options = {}) => dispatchEvent(payload, { trusted: true, ...options });
 
 /** A temp project with real processes and enough of the real environment (PATH) to find node, git and the shell. */
 function realEnvironment(): FakeEnvironment {
@@ -262,6 +268,18 @@ describe("check", () => {
   });
 
   describe("with no command configured", () => {
+    it("in an untrusted project, does not run detected scripts and tells the user, without blocking", async () => {
+      const env = realEnvironment();
+      enableCheck(env);
+      writePackageJson(env, { lint: node("require('fs').writeFileSync('lint-ran', ''); process.exit(1)") });
+
+      const result = await dispatchEvent(claudeCode.stop(), { env });
+
+      expect(existsSync(join(env.cwd, "lint-ran"))).toBe(false);
+      expectMessage(result, /skipped `npm run lint` \(detected from package\.json[^)]*\): this project is not trusted.*`hardhooks trust`/);
+      expect(observe(result).decision).toBe("none");
+    });
+
     it("detects a package.json `lint` script, runs it and announces it", async () => {
       const env = realEnvironment();
       enableCheck(env);
