@@ -11,20 +11,18 @@ You need Node 20 or later and npm.
 ```sh
 npm ci
 npm run typecheck
-npm run test:e2e      # builds dist/hardhooks.mjs once; every test runs the real CLI
-npm test              # the in-process tests still being converted (#22)
-npm run test:smoke    # packaging checks on the bundled CLI
-npm run check         # all of the above
+npm test              # builds dist/hardhooks.mjs once; every test runs the real CLI
+npm run check         # both of the above
 ```
 
 To try your build in Claude Code, run `npm run build && claude --plugin-dir .`. To try it in another repo, run `node /path/to/hooks/dist/hardhooks.mjs init` from that repo.
 
-CI runs typecheck, e2e, unit and smoke tests on Linux, macOS and Windows, each on Node 20, 22 and 24. It also validates the packed Claude Code plugin. `dist/` is build output and is never committed.
+CI runs typecheck and the tests on Linux, macOS and Windows, each on Node 20, 22 and 24. It also validates the packed Claude Code plugin. `dist/` is build output and is never committed.
 
 ## How the code is shaped
 
 - **The dispatcher is the core.** `dispatch()` in `src/dispatcher/` takes an Event name, the raw Host payload and an `Environment` (cwd, home, env, platform, clock, process runner, state dir), and returns `{ stdout, stderr, exitCode }`. That's exactly what the Host sees. The CLI only wraps it.
-- **One directory per Hook.** `src/hooks/<name>/index.ts` exports `defineHook({...})`, next to `<name>.test.ts` and `fixtures/*.json`. Register it in `src/hooks/registry.ts`, one line per Hook, sorted by name.
+- **One directory per Hook.** `src/hooks/<name>/index.ts` exports `defineHook({...})`, next to its `fixtures/*.json`; its tests are `test/e2e/hooks/<name>.test.ts`. Register it in `src/hooks/registry.ts`, one line per Hook, sorted by name.
 - **Hooks are Host-neutral.** They read the normalized `HookEvent`, match tools by kind (`shell`, `edit`, …), and return a Decision. They never write to stdout or exit the process, and they run external programs only through `env.processRunner`.
 - **Guards use shell analysis.** They go through `analyzeShell()` in `src/shell/` and never use regexes over the raw command line. Guards fail closed: when they can't decide, they block and say why ([ADR-0004](docs/adr/0004-guards-fail-closed.md)).
 - **Options are typed.** Each Hook declares `optionsSchema` and `defaults: { standard, strict }`. After changing a schema, run `npm run schema` to regenerate `hardhooks.schema.json`. A test fails if it drifts.
@@ -46,9 +44,10 @@ expectBlocked(result, /main/);
 - `box.trust()` runs the real `hardhooks trust --yes`, for tests of a project's own commands.
 - `box.fakeProgram("npm", { exitCode: 1, stdout: "…" })` puts a fake on PATH that records each call (`calls()`, `waitForCalls()`); `fakeNodePackage` fakes prettier, biome or dprint. On Windows, programs hardhooks starts by bare name without a shell (git, notifiers, gofmt) can't be faked, so those tests are skipped there.
 - `box.auditLog()` reads what audit-log wrote: the detected Host and every Hook's Decision.
-- `sandbox({ now: "2026-01-01T09:00:00Z" })` fixes the CLI's clock through `HARDHOOKS_NOW`, the one testing knob in the product.
+- `sandbox({ now: "2026-01-01T09:00:00Z" })` fixes the CLI's clock through `HARDHOOKS_NOW`, the one testing knob in the product. If a behaviour can't be arranged with real files, configs, programs or this knob, say so in your PR rather than adding a test-only injection point to the code.
+- `copyBundle(dir)` copies the bundle somewhere else, such as a project-local install; `installPlugin(box)` and `runPluginHook(…)` run the packed Claude Code plugin.
 
-The in-process tests (`runEvent`, `fakeEnvironment`, `runInit`, `runTrust` in `test/helpers/`) are being converted ([#22](https://github.com/Rahat-ch/hooks/issues/22)); don't add new ones.
+Tests in a file run concurrently, so each test makes its own sandbox and never shares one. Wrap a block in `describe.sequential` only when its tests must run in order. Put timed measurements in `test/e2e/timing/`: those run after every other test has finished, so the rest of the suite doesn't skew them.
 
 ## Fixtures and corpora
 

@@ -3,7 +3,7 @@
 Pushing a `v*` tag runs [`.github/workflows/release.yml`](../.github/workflows/release.yml). It goes through these steps in order:
 
 1. **Check versions:** the tag must match the versions in `package.json`, `package-lock.json` and `.claude-plugin/plugin.json`, and the tagged commit must be on `main`.
-2. **Run the full CI** ([`ci.yml`](../.github/workflows/ci.yml)): typecheck, unit and smoke tests on Linux, macOS and Windows with Node 20, 22 and 24, plus validation of the packed Claude Code plugin.
+2. **Run the full CI** ([`ci.yml`](../.github/workflows/ci.yml)): typecheck and the test suite (every test runs the bundled CLI) on Linux, macOS and Windows with Node 20, 22 and 24, plus validation of the packed Claude Code plugin.
 3. **Publish the tarball that CI validated** to npm, with provenance. A version with a `-` suffix (`0.2.0-rc.1`) goes to the `next` dist-tag. Every other version goes to `latest`.
 4. **Check the published package:** run `npm i -g hardhooks@<version>`, `hardhooks init --dry-run` and `hardhooks test` on Node 20 on all three OSes, and check that the `$schema` URL serves this version's schema.
 5. **Create the GitHub release** with generated notes and the tarball attached.
