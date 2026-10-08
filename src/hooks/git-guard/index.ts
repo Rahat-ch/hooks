@@ -13,6 +13,7 @@
 import { resolve } from "node:path";
 import { block, type Decision } from "../../decision";
 import { analyzeShell, parseOptions, type ParsedArgs, type SimpleCommand } from "../../shell";
+import * as s from "../../config/schema";
 import { defineHook } from "../hook";
 import {
   protectedBranchViolations,
@@ -23,7 +24,6 @@ import {
 } from "./protected-branches";
 
 /**
- * Options (the config schema is #3's; these are the shapes it will validate).
  * Protection is on when `protectedBranches` is non-empty or
  * `protectDefaultBranch` is true: off under `standard`, `main`, `master` and
  * the detected default branch under `strict`.
@@ -201,6 +201,14 @@ export const gitGuard = defineHook<GitGuardOptions>({
   events: ["PreToolUse"],
   tools: ["shell"],
   failMode: "closed",
+  optionsSchema: s.object({
+    protectedBranches: s.array(s.string(), {
+      description: "Branches that commits and pushes may not target directly. A non-empty list turns protection on.",
+    }),
+    protectDefaultBranch: s.boolean({
+      description: "Also protect the repository's default branch (from origin/HEAD).",
+    }),
+  }),
   defaults: {
     standard: { enabled: true, options: { protectedBranches: [], protectDefaultBranch: false } },
     strict: { enabled: true, options: { protectedBranches: ["main", "master"], protectDefaultBranch: true } },

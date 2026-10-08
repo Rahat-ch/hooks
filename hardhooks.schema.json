@@ -21,11 +21,22 @@
       "type": "object",
       "properties": {
         "git-guard": {
-          "description": "Blocks git commands that rewrite shared history or destroy uncommitted work.",
+          "description": "Blocks git commands that rewrite shared history, destroy uncommitted work or skip git hooks.",
           "type": "object",
           "properties": {
             "enabled": {
               "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "protectedBranches": {
+              "description": "Branches that commits and pushes may not target directly. A non-empty list turns protection on.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "protectDefaultBranch": {
+              "description": "Also protect the repository's default branch (from origin/HEAD).",
               "type": "boolean"
             }
           },
