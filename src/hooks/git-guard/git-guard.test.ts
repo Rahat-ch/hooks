@@ -1,6 +1,7 @@
 import { describe, it } from "vitest";
 import {
   claudeCode,
+  expectAsked,
   expectBlocked,
   expectFixture,
   expectNoDecision,
@@ -129,6 +130,41 @@ describe("git-guard", () => {
     "git commit -m 'skip hooks with --no-verify? no'",
     "git commit -m wip -m 'details: reset --hard'",
     "git stash",
+  ])("allows `%s`", async (command) => {
+    expectNoDecision(await runEvent(claudeCode.bash(command)));
+  });
+
+  it.each([
+    ["git push --force-with-lease", /force-with-lease/],
+    ["git push --force-with-lease=main:abc123 origin main", /force-with-lease/],
+    ["git push --force-with-lease --force-if-includes origin feature", /force-with-lease/],
+    ["git checkout -- .", /discard/],
+    ["git checkout .", /discard/],
+    ["git checkout HEAD -- .", /discard/],
+    ["git checkout -f main", /discard/],
+    ["git restore .", /discard/],
+    ["git restore --source=HEAD~1 :/", /discard/],
+    ["git restore --staged --worktree .", /discard/],
+    ["git branch -D old-feature", /branch -D/],
+    ["git branch --delete --force old-feature", /branch -D/],
+    ["git branch -df old-feature", /branch -D/],
+  ])("asks before `%s`", async (command, reason) => {
+    expectAsked(await runEvent(claudeCode.bash(command)), reason);
+  });
+
+  it("blocks rather than asks when a command line both force-pushes and asks", async () => {
+    expectBlocked(await runEvent(claudeCode.bash("git branch -D tmp && git push --force")), /force/);
+    expectBlocked(await runEvent(claudeCode.bash("git push --force-with-lease --force")), /force/);
+  });
+
+  it.each([
+    "git checkout feature",
+    "git checkout -b feature",
+    "git checkout -- src/file.ts",
+    "git restore src/file.ts",
+    "git restore --staged .",
+    "git branch -d merged-feature",
+    "git branch -m old new",
   ])("allows `%s`", async (command) => {
     expectNoDecision(await runEvent(claudeCode.bash(command)));
   });

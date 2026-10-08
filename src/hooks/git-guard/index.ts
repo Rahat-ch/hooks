@@ -61,8 +61,8 @@ function isLong(name: string, full: string): boolean {
   return name === full || (name.length >= 3 && full.startsWith(name));
 }
 
-const has = (parsed: ParsedArgs, short: string | undefined, long: string) =>
-  parsed.options.some((o) => (short !== undefined && o.name === short) || isLong(o.name, long));
+const has = (parsed: ParsedArgs, short: string | undefined, long?: string) =>
+  parsed.options.some((o) => o.name === short || (long !== undefined && isLong(o.name, long)));
 
 const reasons = {
   force:
@@ -80,7 +80,19 @@ const reasons = {
   noVerify:
     "`--no-verify` skips the repository's git hooks (pre-commit and pre-push checks). " +
     "Fix what the hooks report instead of bypassing them.",
+  forceWithLease:
+    "`git push --force-with-lease` rewrites history on the remote (safely refusing if someone else pushed). " +
+    "Confirm the force-push is intended.",
+  discardAll:
+    "This discards all uncommitted changes in the working tree, which can't be recovered. " +
+    "Confirm the changes should be thrown away (or `git stash` them instead).",
+  branchDelete:
+    "`git branch -D` deletes the branch even if it isn't merged, which can lose its commits. " +
+    "Confirm the branch should be deleted (or use `git branch -d`).",
 };
+
+/** Pathspecs that cover the whole working tree. */
+const everything = new Set([".", "./", "./*", "*", ":/", ":/.", ":/*", ":(top)", ":(top).", ":(top)*"]);
 
 const rules: Record<string, (args: readonly string[]) => Finding[]> = {
   push(args) {
@@ -90,6 +102,9 @@ const rules: Record<string, (args: readonly string[]) => Finding[]> = {
       (o) => o.name === "-f" || (isLong(o.name, "--force") && !o.name.startsWith("--force-")),
     );
     if (force) findings.push({ decision: "block", reason: reasons.force });
+    if (parsed.options.some((o) => o.name.length > "--force-".length && "--force-with-lease".startsWith(o.name))) {
+      findings.push({ decision: "ask", reason: reasons.forceWithLease });
+    }
     if (parsed.operands.some((operand) => operand.startsWith("+"))) {
       findings.push({ decision: "block", reason: reasons.plusRefspec });
     }
@@ -127,6 +142,23 @@ const rules: Record<string, (args: readonly string[]) => Finding[]> = {
   clean(args) {
     const parsed = parseOptions(args, { withValue: ["-e", "--exclude"] });
     return has(parsed, "-f", "--force") ? [{ decision: "block", reason: reasons.clean }] : [];
+  },
+  checkout(args) {
+    const parsed = parseOptions(args, { withValue: ["-b", "-B", "--orphan", "--pathspec-from-file"] });
+    const discards = has(parsed, "-f", "--force") || parsed.operands.some((operand) => everything.has(operand));
+    return discards ? [{ decision: "ask", reason: reasons.discardAll }] : [];
+  },
+  restore(args) {
+    const parsed = parseOptions(args, { withValue: ["-s", "--source", "--pathspec-from-file"] });
+    // Without --worktree, `--staged` only unstages and leaves the files alone.
+    const worktree = has(parsed, "-W", "--worktree") || !has(parsed, "-S", "--staged");
+    const discards = worktree && parsed.operands.some((operand) => everything.has(operand));
+    return discards ? [{ decision: "ask", reason: reasons.discardAll }] : [];
+  },
+  branch(args) {
+    const parsed = parseOptions(args, { withValue: ["-u", "--set-upstream-to"] });
+    const forceDelete = has(parsed, "-D") || (has(parsed, "-d", "--delete") && has(parsed, "-f", "--force"));
+    return forceDelete ? [{ decision: "ask", reason: reasons.branchDelete }] : [];
   },
 };
 
