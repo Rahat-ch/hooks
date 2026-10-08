@@ -1,3 +1,4 @@
+export * from "./bundle";
 export * from "./cli";
 export * from "./decisions";
 export * from "./fake-program";

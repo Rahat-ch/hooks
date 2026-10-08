@@ -41,6 +41,8 @@ export interface RunOptions {
   /** `HARDHOOKS_NOW` for this run only. */
   now?: string;
   timeoutMs?: number;
+  /** Run this copy of the bundle (see `copyBundle`) instead of the built one. */
+  bundle?: string;
 }
 
 export interface EventOptions extends Omit<RunOptions, "stdin"> {
@@ -197,6 +199,7 @@ export function sandbox(options: SandboxOptions = {}): Sandbox {
         env: merge(env, { ...run.env, ...(run.now !== undefined ? { HARDHOOKS_NOW: run.now } : {}) }),
         ...(run.stdin !== undefined ? { stdin: run.stdin } : {}),
         ...(run.timeoutMs !== undefined ? { timeoutMs: run.timeoutMs } : {}),
+        ...(run.bundle !== undefined ? { bundle: run.bundle } : {}),
       });
     },
 
