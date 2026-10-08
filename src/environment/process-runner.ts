@@ -28,6 +28,7 @@ export const nodeProcessRunner: ProcessRunner = {
         env: childEnv(options.env),
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        shell: options.shell ?? false,
       });
       const timer =
         options.timeoutMs === undefined

@@ -10,6 +10,12 @@ export interface RunOptions {
   input?: string;
   /** Kill the child after this many milliseconds; the result has `timedOut: true`. */
   timeoutMs?: number;
+  /**
+   * Run `command` as a whole command line through the platform shell
+   * (`/bin/sh -c` on POSIX, `cmd.exe /d /s /c` on Windows), as npm runs
+   * scripts. For user-written command lines only; pass no `args`.
+   */
+  shell?: boolean;
 }
 
 export interface ProcessResult {

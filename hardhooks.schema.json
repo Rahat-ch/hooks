@@ -20,6 +20,27 @@
       "description": "Per-Hook overrides: `enabled` plus that Hook's options. Anything left out comes from the Preset.",
       "type": "object",
       "properties": {
+        "check": {
+          "description": "Runs the project's checks when the Host tries to stop, and blocks the stop while they fail.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "command": {
+              "description": "Command line to run, through the platform shell (sh -c on POSIX, cmd.exe /d /s /c on Windows). Omit to autodetect.",
+              "type": "string"
+            },
+            "outputBytes": {
+              "description": "Most bytes of failure output to put in the block reason, which enters the Host's context.",
+              "type": "integer",
+              "minimum": 200,
+              "maximum": 9000
+            }
+          },
+          "additionalProperties": false
+        },
         "git-guard": {
           "description": "Blocks git commands that rewrite shared history or destroy uncommitted work.",
           "type": "object",
