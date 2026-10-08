@@ -30,6 +30,22 @@
             }
           },
           "additionalProperties": false
+        },
+        "notify": {
+          "description": "Desktop notification when the Host needs input, or finishes a long turn.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "thresholdSeconds": {
+              "description": "Notify at Stop only when the turn ran longer than this many seconds.",
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
