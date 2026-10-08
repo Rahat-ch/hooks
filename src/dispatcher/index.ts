@@ -3,7 +3,8 @@
  * Host-visible result out. `hardhooks run <Event>` is a thin wrapper around
  * `dispatch`, and tests drive it directly.
  */
-import type { HookSettings, ResolvedConfig } from "../config";
+import { hookSettings, type ResolvedConfig } from "../config";
+import { formatConfigError, loadConfig, type ConfigError } from "../config/load";
 import { block, combineDecisions, type HookDecision } from "../decision";
 import type { Environment } from "../environment";
 import type { EventName, HookEvent } from "../event";
@@ -16,7 +17,11 @@ export interface DispatchRequest {
   event: string;
   /** The raw Host payload, exactly as read from stdin. */
   payload: string;
-  config: ResolvedConfig;
+  /**
+   * The resolved config. Omit it to load `.hardhooks.json` and the user config
+   * through `env`, as `hardhooks run` does.
+   */
+  config?: ResolvedConfig;
   env: Environment;
   /** Hooks to consider. Defaults to the built-in registry; tests may inject their own. */
   hooks?: readonly Hook<any>[];
@@ -29,20 +34,24 @@ export interface HostResult {
   exitCode: number;
 }
 
-function settingsFor(hook: Hook<any>, config: ResolvedConfig): HookSettings<unknown> {
-  return config.hooks[hook.name] ?? hook.defaults[config.preset];
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Whether a Hook handles this Event's tool (every Hook handles tool-less Events). */
+function handlesTool(hook: Hook<any>, event: HookEvent): boolean {
+  return event.tool === undefined || hook.tools === undefined || hook.tools.includes(event.tool.kind);
+}
+
 export async function dispatch(request: DispatchRequest): Promise<HostResult> {
-  const { config, env } = request;
+  const { env } = request;
   const eventName = request.event as EventName;
-  const enabled = (request.hooks ?? registeredHooks).filter(
-    (hook) => hook.events.includes(eventName) && settingsFor(hook, config).enabled,
-  );
+  const hooks = request.hooks ?? registeredHooks;
+  const loaded = request.config ? { ok: true as const, config: request.config } : loadConfig(env, hooks);
+  if (!loaded.ok) return invalidConfig(eventName, request, hooks, loaded.errors);
+  const { config } = loaded;
+
+  const enabled = hooks.filter((hook) => hook.events.includes(eventName) && hookSettings(hook, config).enabled);
   // Fast path: the plugin's static hooks file calls us for every Event.
   if (enabled.length === 0) return { stdout: "", stderr: "", exitCode: 0 };
 
@@ -58,14 +67,12 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
     return finish(eventName, decisions, [`hardhooks: ${errorMessage(error)}`]);
   }
 
-  const selected = enabled.filter(
-    (hook) => event.tool === undefined || hook.tools === undefined || hook.tools.includes(event.tool.kind),
-  );
+  const selected = enabled.filter((hook) => handlesTool(hook, event));
 
   const results = await Promise.all(
     selected.map(async (hook): Promise<HookDecision | undefined> => {
       try {
-        const decision = await hook.run(event, settingsFor(hook, config).options, env);
+        const decision = await hook.run(event, hookSettings(hook, config).options, env);
         return decision === undefined ? undefined : { hook: hook.name, decision };
       } catch (error) {
         if (hook.failMode === "closed") {
@@ -82,6 +89,35 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
     results.filter((r): r is HookDecision => r !== undefined),
     stderr,
   );
+}
+
+/**
+ * The config can't be loaded (ADR-0004): block wherever a Guard would have
+ * run, naming the errors, so a typo never silently disables protection. Allow
+ * everywhere else. The errors always go to stderr.
+ */
+function invalidConfig(
+  eventName: EventName,
+  request: DispatchRequest,
+  hooks: readonly Hook<any>[],
+  errors: readonly ConfigError[],
+): HostResult {
+  const messages = errors.map(formatConfigError);
+  const stderr = messages.map((message) => `hardhooks: invalid config: ${message}`);
+  const guards = hooks.filter((hook) => hook.failMode === "closed" && hook.events.includes(eventName));
+  if (guards.length === 0) return finish(eventName, [], stderr);
+
+  let event: HookEvent | undefined;
+  try {
+    event = parseClaudeCodePayload(request.payload, eventName, request.env.cwd);
+  } catch {
+    // Unknown tool: every Guard on this Event counts.
+  }
+  if (event !== undefined && !guards.some((hook) => handlesTool(hook, event))) return finish(eventName, [], stderr);
+
+  const reason =
+    "The hardhooks config is invalid, so Guards block until it is fixed: " + messages.join("; ");
+  return finish(eventName, [{ hook: "config", decision: block(reason) }], stderr);
 }
 
 function finish(eventName: string, decisions: readonly HookDecision[], stderr: readonly string[]): HostResult {

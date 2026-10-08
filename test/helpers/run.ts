@@ -1,5 +1,4 @@
 import type { ResolvedConfig } from "../../src/config";
-import { defaultConfig } from "../../src/config";
 import type { Environment } from "../../src/environment";
 import type { HostResult } from "../../src/dispatcher";
 import { dispatch } from "../../src/dispatcher";
@@ -8,6 +7,11 @@ import type { ClaudeCodePayload } from "./payloads";
 import { fakeEnvironment } from "./environment";
 
 export interface RunEventOptions {
+  /**
+   * A ready-resolved config. Omit it to load config files through `env`
+   * exactly as `hardhooks run` does (write them with `writeRepoConfig` /
+   * `writeUserConfig`); a fresh environment has none, so `standard` applies.
+   */
   config?: ResolvedConfig;
   env?: Environment;
   /** Replace the built-in registry, e.g. with test-only Hooks. */
@@ -29,8 +33,8 @@ export async function runEvent(payload: ClaudeCodePayload | string, options: Run
   return dispatch({
     event,
     payload: raw,
-    config: options.config ?? defaultConfig(),
     env,
+    ...(options.config ? { config: options.config } : {}),
     ...(options.hooks ? { hooks: options.hooks } : {}),
   });
 }

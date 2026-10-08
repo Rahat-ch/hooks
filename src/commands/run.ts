@@ -1,4 +1,3 @@
-import { defaultConfig } from "../config";
 import { dispatch } from "../dispatcher";
 import type { Command } from "./command";
 
@@ -12,8 +11,7 @@ export const runCommand: Command = async ({ args, env, readStdin, stdout, stderr
   const result = await dispatch({
     event,
     payload: await readStdin(),
-    // #3 replaces this with the resolved .hardhooks.json / user config.
-    config: defaultConfig(),
+    // No `config`: the dispatcher loads .hardhooks.json and the user config through `env`.
     env,
   });
   if (result.stdout) stdout(result.stdout);
