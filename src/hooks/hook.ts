@@ -24,6 +24,13 @@ export interface Hook<Options = Record<string, never>> {
    */
   readonly failMode: "closed" | "open";
   /**
+   * How long the dispatcher waits for `run` before giving up on this Hook. A
+   * Guard that times out blocks; any other Hook is ignored. Defaults to
+   * 30 s for Guards and no limit for other Hooks, which bound their own
+   * external processes (formatters, check commands).
+   */
+  readonly timeoutMs?: number;
+  /**
    * The options users may set under `hooks.<name>` in `.hardhooks.json`
    * (besides `enabled`), built with `src/config/schema`. Config files may set
    * any subset; the rest comes from `defaults`. It also generates the shipped

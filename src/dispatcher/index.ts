@@ -38,6 +38,21 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** How long a Guard may take unless it declares its own `timeoutMs`. */
+const GUARD_TIMEOUT_MS = 30_000;
+
+/** Settle with `promise`, or reject once `ms` have passed. No limit when `ms` is undefined. */
+function withTimeout<T>(promise: Promise<T>, ms: number | undefined): Promise<T> {
+  if (ms === undefined) return promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+    // Never keep the process alive just to time a Hook out.
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** Whether a Hook handles this Event's tool (every Hook handles tool-less Events). */
 function handlesTool(hook: Hook<any>, event: HookEvent): boolean {
   return event.tool === undefined || hook.tools === undefined || hook.tools.includes(event.tool.kind);
@@ -72,7 +87,10 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
   const results = await Promise.all(
     selected.map(async (hook): Promise<HookDecision | undefined> => {
       try {
-        const decision = await hook.run(event, hookSettings(hook, config).options, env);
+        const decision = await withTimeout(
+          Promise.resolve().then(() => hook.run(event, hookSettings(hook, config).options, env)),
+          hook.timeoutMs ?? (hook.failMode === "closed" ? GUARD_TIMEOUT_MS : undefined),
+        );
         return decision === undefined ? undefined : { hook: hook.name, decision };
       } catch (error) {
         if (hook.failMode === "closed") {

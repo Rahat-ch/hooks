@@ -10,20 +10,24 @@ import {
   expectContext,
   expectNoDecision,
   fakeEnvironment,
+  hermeticGitEnvironment,
+  initRealGitRepo,
   observe,
   runEvent,
+  writeProjectFile,
 } from "./helpers";
 
 function testHook(
   name: string,
-  decide: () => Decision | undefined,
-  overrides: { events?: EventName[]; tools?: ToolKind[]; failMode?: "open" | "closed" } = {},
+  decide: () => Decision | undefined | Promise<Decision | undefined>,
+  overrides: { events?: EventName[]; tools?: ToolKind[]; failMode?: "open" | "closed"; timeoutMs?: number } = {},
 ): Hook<Record<string, never>> {
   return defineHook({
     name,
     description: "test-only Hook",
     events: overrides.events ?? ["PreToolUse"],
     ...(overrides.tools ? { tools: overrides.tools } : {}),
+    ...(overrides.timeoutMs !== undefined ? { timeoutMs: overrides.timeoutMs } : {}),
     failMode: overrides.failMode ?? "open",
     defaults: { standard: { enabled: true, options: {} }, strict: { enabled: true, options: {} } },
     run: decide,
@@ -77,6 +81,62 @@ describe("dispatcher", () => {
       ],
     });
     expectAsked(result, /confirm/);
+  });
+
+  describe("two Guards on one Event", () => {
+    it("a command matching both Guards returns one block whose reason includes both", async () => {
+      const observed = expectBlocked(await runEvent(claudeCode.bash("git push --force origin main && rm -rf ~")));
+      expect(observed.reason).toMatch(/\[hardhooks\/git-guard\][^\n]*force/);
+      expect(observed.reason).toMatch(/\[hardhooks\/block-destructive-shell\][^\n]*home directory/);
+    });
+
+    it("one ask plus one allow merges to ask", async () => {
+      const env = hermeticGitEnvironment();
+      initRealGitRepo(env);
+      writeProjectFile(env.cwd, ".gitignore", "node_modules/\n");
+      writeProjectFile(env.cwd, "node_modules/x/index.js");
+      const result = await runEvent(claudeCode.bash("rm -rf node_modules && git push --force-with-lease"), { env });
+      expectAsked(result, /\[hardhooks\/git-guard\][^\n]*force-with-lease/);
+      expectAsked(
+        await runEvent(bash, { hooks: [testHook("allower", () => allow()), testHook("asker", () => ask("confirm"))] }),
+        /asker\] confirm/,
+      );
+    });
+
+    it("one ask plus one block merges to block, giving only the block's reason", async () => {
+      const observed = expectBlocked(await runEvent(claudeCode.bash("git branch -D old && rm -rf /")));
+      expect(observed.reason).toMatch(/block-destructive-shell[^\n]*root/);
+      expect(observed.reason).not.toMatch(/git-guard/);
+    });
+
+    it("a throwing Guard contributes a block without changing the other Guard's Decision", async () => {
+      const observed = expectBlocked(
+        await runEvent(bash, {
+          hooks: [
+            testHook("broken-guard", () => { throw new Error("kaboom"); }, { failMode: "closed" }),
+            testHook("working-guard", () => block("really dangerous"), { failMode: "closed" }),
+          ],
+        }),
+      );
+      expect(observed.reason).toMatch(/broken-guard[\s\S]*kaboom/);
+      expect(observed.reason).toMatch(/\[hardhooks\/working-guard\] really dangerous/);
+    });
+  });
+
+  describe("per-Hook timeout", () => {
+    const never = () => new Promise<undefined>(() => {});
+
+    it("a Guard that times out blocks, saying so", async () => {
+      const hooks = [testHook("slow-guard", never, { failMode: "closed", timeoutMs: 20 })];
+      expectBlocked(await runEvent(bash, { hooks }), /slow-guard[\s\S]*timed out/);
+    });
+
+    it("any other Hook that times out is ignored, and the rest still decide", async () => {
+      const hooks = [testHook("slow-formatter", never, { timeoutMs: 20 }), testHook("asker", () => ask("confirm"))];
+      const result = await runEvent(bash, { hooks });
+      expectAsked(result, /confirm/);
+      expect(result.stderr).toMatch(/slow-formatter[\s\S]*timed out/);
+    });
   });
 
   it("only runs Hooks for the tool kinds they handle", async () => {
