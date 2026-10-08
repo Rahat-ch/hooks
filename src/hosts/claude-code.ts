@@ -105,6 +105,8 @@ export function renderClaudeCodeOutput(eventName: string, outcome: Outcome): str
     }
   }
   if (outcome.context !== undefined && contextEvents.has(eventName)) specific.additionalContext = outcome.context;
+  // Universal field: the Host writes it to its terminal, on every Event (interactive sessions only).
+  if (outcome.terminalSequence !== undefined) out.terminalSequence = outcome.terminalSequence;
 
   if (Object.keys(specific).length > 1) out.hookSpecificOutput = specific;
   return Object.keys(out).length > 0 ? JSON.stringify(out) : "";

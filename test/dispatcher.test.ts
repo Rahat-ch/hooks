@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultConfig } from "../src/config";
-import { addContext, allow, ask, block, type Decision } from "../src/decision";
+import { addContext, allow, ask, block, terminalSequence, type Decision } from "../src/decision";
 import type { EventName, ToolKind } from "../src/event";
 import { defineHook, type Hook } from "../src/hooks/hook";
 import {
@@ -113,6 +113,18 @@ describe("dispatcher", () => {
     });
     expectContext(result, /Branch: main/);
     expect(observe(result).decision).toBe("none");
+  });
+
+  it("hands the Host every Hook's terminal sequence to write, alongside the merged Decision", async () => {
+    const result = await runEvent(claudeCode.stop(), {
+      hooks: [
+        testHook("check", () => block("tests are failing"), { events: ["Stop"] }),
+        testHook("bell", () => terminalSequence("\u0007"), { events: ["Stop"] }),
+        testHook("osc", () => terminalSequence("\u001b]9;done\u0007"), { events: ["Stop"] }),
+      ],
+    });
+    expectBlocked(result, /tests are failing/);
+    expect(observe(result).terminalSequence).toBe("\u0007\u001b]9;done\u0007");
   });
 
   it("gives Hooks a Host-neutral Event built from the payload", async () => {
