@@ -170,6 +170,15 @@ describe("hardhooks test", () => {
     expect(result.exitCode, result.stdout).toBe(0);
   });
 
+  it("fails on an invalid config, naming the problem, without running anything", async () => {
+    const env = fakeEnvironment();
+    writeRepoConfig(env, { hooks: { "git-guard": { enabled: "yes" } } });
+    const result = await runTestCommand({ env });
+    expect(result.stderr).toMatch(/invalid config: .*\.hardhooks\.json: hooks\.git-guard\.enabled/);
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).toBe(1);
+  });
+
   describe("install warnings", () => {
     /** A test-only Hook like `check`: opt-in under standard, on Stop. */
     const check = defineHook({
