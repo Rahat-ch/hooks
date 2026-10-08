@@ -4,7 +4,9 @@
  */
 import type { Hook } from "./hook";
 import { gitGuard } from "./git-guard";
+import { sessionContext } from "./session-context";
 
 export const hooks: readonly Hook<any>[] = [
   gitGuard,
+  sessionContext,
 ];
