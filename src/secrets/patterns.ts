@@ -1,6 +1,6 @@
 /**
  * gitignore-style patterns compiled to matchers over canonical paths
- * (see `./paths`). Zero-dependency: we need only the pattern syntax, not
+ * (see `src/paths`). Zero-dependency: we need only the pattern syntax, not
  * directory walking.
  *
  * - Blank lines and `#` comments are skipped; `\#` and `\!` escape them.
@@ -13,7 +13,7 @@
  *   character class.
  * - A trailing `/` marks a directory: it and everything inside it match.
  */
-import { relativeTo, resolvePath } from "./paths";
+import { relativeTo, resolvePath } from "../paths";
 
 export interface Rule {
   /** The pattern as written, for messages. */

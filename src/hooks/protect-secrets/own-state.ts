@@ -22,7 +22,7 @@
 import { dirname } from "node:path";
 import { userConfigPath } from "../../config/load";
 import type { Environment } from "../../environment";
-import { canonicalPath, resolvePath } from "../../secrets";
+import { canonicalPath, resolvePath } from "../../paths";
 import { parseOptions, type SimpleCommand } from "../../shell";
 import { fedArguments } from "./shell";
 

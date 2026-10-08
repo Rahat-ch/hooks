@@ -17,9 +17,10 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { findRepoConfig } from "../config/load";
 import type { Environment } from "../environment";
+import { toSlashes } from "../paths";
 import { projectRoot } from "../project";
 
 /** How much of a file the trust hash covers. */
@@ -108,8 +109,6 @@ function canonical(dir: string): string {
   }
 }
 
-const slashes = (path: string) => path.split(sep).join("/");
-
 function covered(root: string, file: string, coverage: Coverage): TrustInput {
   const text = readText(join(root, file));
   let value: string;
@@ -127,13 +126,13 @@ function covered(root: string, file: string, coverage: Coverage): TrustInput {
     // Unparseable: hash it whole, so any edit counts.
     value = pkg === undefined ? text : JSON.stringify(packageJsonFields.map((field) => pkg[field] ?? null));
   }
-  return { file: slashes(file), coverage, exists: text !== undefined, digest: sha256(coverage, value) };
+  return { file: toSlashes(file), coverage, exists: text !== undefined, digest: sha256(coverage, value) };
 }
 
 /** The files the hash covers for the project containing `dir`, the repo config first. */
 function inputsFor(env: Environment, root: string, dir: string): { repoConfig: string | undefined; inputs: TrustInput[] } {
   const configPath = findRepoConfig({ ...env, cwd: dir });
-  const repoConfig = configPath === undefined ? undefined : slashes(relative(root, canonical(configPath)));
+  const repoConfig = configPath === undefined ? undefined : toSlashes(relative(root, canonical(configPath)));
   const inputs = [covered(root, repoConfig ?? ".hardhooks.json", "content")];
   for (const [file, coverage] of projectInputs) inputs.push(covered(root, file, coverage));
   return { repoConfig, inputs };

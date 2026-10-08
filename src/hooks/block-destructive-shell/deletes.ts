@@ -17,7 +17,7 @@
  */
 import { basename, join } from "node:path";
 import { parseOptions, type SimpleCommand } from "../../shell";
-import { globBase, isFilesystemRoot, isWithin, resolveOperand, samePath, toPosixRelative, type PathContext } from "./paths";
+import { globBase, isFilesystemRoot, isWithin, resolveOperand, samePath, toPosixRelative } from "../../paths";
 import type { GitQueries } from "../../git";
 
 export interface Finding {
@@ -35,7 +35,9 @@ interface Target {
   readonly dynamic: boolean;
 }
 
-export interface DeleteContext extends PathContext {
+export interface DeleteContext {
+  /** Picks how paths compare (`foldsCase`) and whether `/c/…` names a drive. */
+  readonly platform: NodeJS.Platform;
   readonly home: string;
   /** The Host's working directory. */
   readonly cwd: string;
@@ -107,20 +109,22 @@ type Location =
 
 /** Where a resolved (possibly globbed) path falls relative to root, home and project. */
 function locate(path: string, project: string, ctx: DeleteContext): Location {
+  const within = (p: string, ancestor: string) => isWithin(p, ancestor, ctx.platform);
+  const same = (a: string, b: string) => samePath(a, b, ctx.platform);
   const { base, glob } = globBase(path);
   if (isFilesystemRoot(base)) return { kind: "root", path: base };
-  if (isWithin(ctx.home, base, ctx)) return { kind: "home", path: base };
-  if (isWithin(project, base, ctx)) {
+  if (within(ctx.home, base)) return { kind: "home", path: base };
+  if (within(project, base)) {
     // `rm -rf *` in the project root deletes its contents: judge them as inside.
-    if (glob && samePath(base, project, ctx)) return { kind: "inside", path, glob };
+    if (glob && same(base, project)) return { kind: "inside", path, glob };
     return { kind: "project", path: base };
   }
-  if (isWithin(base, project, ctx)) {
-    if (isWithin(base, join(project, ".git"), ctx)) return { kind: "git-dir", path: base };
+  if (within(base, project)) {
+    if (within(base, join(project, ".git"))) return { kind: "git-dir", path: base };
     return { kind: "inside", path, glob };
   }
   const allowed = ctx.allowedPaths.some(
-    (dir) => isWithin(base, dir, ctx) && !samePath(base, dir, ctx) && !isWithin(project, dir, ctx) && !isWithin(ctx.home, dir, ctx),
+    (dir) => within(base, dir) && !same(base, dir) && !within(project, dir) && !within(ctx.home, dir),
   );
   return { kind: allowed ? "allowed" : "outside", path: base };
 }
@@ -173,7 +177,7 @@ async function judge(target: Target, project: string, gitRoot: string | undefine
     const worst = target.operand.replace(DYNAMIC_PART, "");
     const shown = target.operand === "" ? "arguments supplied at run time" : `\`${target.operand}\``;
     if (worst !== "") {
-      const location = locate(resolveOperand(target.cwd, worst, ctx), project, ctx);
+      const location = locate(resolveOperand(target.cwd, worst, ctx.platform), project, ctx);
       if (catastrophic(location)) {
         return {
           decision: "block",
@@ -190,7 +194,7 @@ async function judge(target: Target, project: string, gitRoot: string | undefine
     };
   }
 
-  const location = locate(resolveOperand(target.cwd, target.operand, ctx), project, ctx);
+  const location = locate(resolveOperand(target.cwd, target.operand, ctx.platform), project, ctx);
   switch (location.kind) {
     case "allowed":
       return undefined;

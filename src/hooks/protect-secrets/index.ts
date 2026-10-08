@@ -19,7 +19,8 @@
  */
 import { block, type Decision } from "../../decision";
 import * as s from "../../config/schema";
-import { defaultIgnoreFiles, resolvePath, secretsMatcher, type SecretMatch } from "../../secrets";
+import { resolvePath } from "../../paths";
+import { defaultIgnoreFiles, secretsMatcher, type SecretMatch } from "../../secrets";
 import { projectRoot } from "../../project";
 import { analyzeShell } from "../../shell";
 import { defineHook } from "../hook";

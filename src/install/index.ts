@@ -11,6 +11,7 @@ import type { Environment } from "../environment";
 import { isGitIgnored } from "../git";
 import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
+import { pathUnder } from "../paths";
 import { projectRoot } from "../project";
 import { untrustedNote } from "../trust/command";
 import { unifiedDiff } from "./diff";
@@ -78,12 +79,8 @@ export function localSettingsPath(env: Environment): string {
  */
 export function bundleReference(env: Environment, scope: InstallScope, bundlePath: string): string {
   if (scope !== "project") return bundlePath;
-  const slashes = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-  const fold = (path: string) => (env.platform === "win32" ? path.toLowerCase() : path);
-  const root = slashes(projectRoot(env.cwd)) + "/";
-  const bundle = slashes(bundlePath);
-  if (!fold(bundle).startsWith(fold(root))) return bundlePath;
-  return "${CLAUDE_PROJECT_DIR}/" + bundle.slice(root.length);
+  const inProject = pathUnder(bundlePath, projectRoot(env.cwd), env.platform);
+  return inProject === undefined ? bundlePath : "${CLAUDE_PROJECT_DIR}/" + inProject;
 }
 
 class SettingsError extends Error {}

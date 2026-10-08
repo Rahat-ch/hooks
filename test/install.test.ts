@@ -65,6 +65,19 @@ describe("hardhooks init", () => {
     });
   });
 
+  it.each(["darwin", "win32"] as const)(
+    "on %s, recognises a project install whose path differs from the project's only in case",
+    async (platform) => {
+      // Case-insensitive file systems: `cd ~/code/app` into ~/Code/App gives a cwd in another case than the bundle's.
+      const env = fakeEnvironment({ platform });
+      const bundlePath = projectBundlePath(env).toUpperCase();
+      await runInit({ env, mode: "yes", bundlePath, hooks: [shellGuard] });
+      expect(readSettings(projectSettingsPath(env))).toEqual({
+        hooks: { PreToolUse: [entry("${CLAUDE_PROJECT_DIR}/NODE_MODULES/HARDHOOKS/DIST/HARDHOOKS.MJS", "PreToolUse", "Bash")] },
+      });
+    },
+  );
+
   describe("a bundle outside the project (global install)", () => {
     it("goes to .claude/settings.local.json, never the shared settings a team commits, and says why", async () => {
       const env = fakeEnvironment();

@@ -13,9 +13,8 @@
  */
 import { readFileSync } from "node:fs";
 import { compileRules, lastMatch, type Rule } from "./patterns";
-import { canonicalPath, resolvePath } from "./paths";
+import { canonicalPath, resolvePath } from "../paths";
 
-export { canonicalPath, resolvePath } from "./paths";
 export { hasGlob, shellSegmentRegex } from "./patterns";
 
 /**
