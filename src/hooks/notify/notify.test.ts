@@ -140,6 +140,22 @@ describe("notify", () => {
     expect(observe(result).terminalSequence).toBe(`\u001b]9;${basename(env.cwd)}: done]52;c;aGk= now\u0007`);
   });
 
+  it.each([
+    { platform: "darwin", programs: ["osascript"], sound: /sound name/ },
+    { platform: "darwin", programs: ["terminal-notifier"], sound: /-sound/ },
+    { platform: "linux", programs: ["notify-send"], sound: /sound-name/ },
+    { platform: "win32", programs: ["powershell.exe"], sound: /Notification\.Default/ },
+  ] as const)("on $platform via $programs, plays a sound unless `sound` is off", async ({ platform, programs, sound }) => {
+    const notifyWith = async (options: Record<string, unknown>) => {
+      const env = envWith(platform, programs);
+      await runEvent(claudeCode.notification("Claude needs your permission"), { env, config: notifyConfig(options) });
+      return spawns(env)[0]!.args.join("\n");
+    };
+    expect(await notifyWith({})).toMatch(sound);
+    expect(await notifyWith({ sound: true })).toMatch(sound);
+    expect(await notifyWith({ sound: false })).not.toMatch(sound);
+  });
+
   it("calls no webhook unless one is configured", async () => {
     const env = envWith("linux", ["notify-send", "curl"]);
     await runEvent(claudeCode.notification("Claude needs your permission"), { env, config: notifyConfig() });

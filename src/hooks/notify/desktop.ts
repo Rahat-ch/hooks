@@ -39,33 +39,44 @@ function findProgram(env: Environment, programs: readonly string[]): string | un
 }
 
 /** AppleScript reading title and body from argv, so neither is ever parsed as script. */
-const appleScript = ["on run argv", "display notification (item 2 of argv) with title (item 1 of argv)", "end run"];
+function appleScript(sound: boolean): string[] {
+  const display = "display notification (item 2 of argv) with title (item 1 of argv)";
+  return ["on run argv", sound ? `${display} sound name "Glass"` : display, "end run"];
+}
 
 /**
  * A Windows toast through the WinRT API in Windows PowerShell 5.1 (pwsh 7
  * can't load WinRT types). Title and body arrive in environment variables.
  */
-const toastScript = [
-  "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
-  "$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
-  "$text = $xml.GetElementsByTagName('text')",
-  "$text.Item(0).AppendChild($xml.CreateTextNode($env:HARDHOOKS_NOTIFY_TITLE)) > $null",
-  "$text.Item(1).AppendChild($xml.CreateTextNode($env:HARDHOOKS_NOTIFY_BODY)) > $null",
-  "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
-  // PowerShell's own AppUserModelID: toasts need a registered app to show under.
-  "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($toast)",
-].join("; ");
+function toastScript(sound: boolean): string {
+  return [
+    "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+    "$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
+    "$text = $xml.GetElementsByTagName('text')",
+    "$text.Item(0).AppendChild($xml.CreateTextNode($env:HARDHOOKS_NOTIFY_TITLE)) > $null",
+    "$text.Item(1).AppendChild($xml.CreateTextNode($env:HARDHOOKS_NOTIFY_BODY)) > $null",
+    "$audio = $xml.CreateElement('audio')",
+    sound
+      ? "$audio.SetAttribute('src', 'ms-winsoundevent:Notification.Default')"
+      : "$audio.SetAttribute('silent', 'true')",
+    "$xml.DocumentElement.AppendChild($audio) > $null",
+    "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
+    // PowerShell's own AppUserModelID: a toast must show under a registered app.
+    "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($toast)",
+  ].join("; ");
+}
 
 /** The native notification command for this platform, or undefined when none is installed. */
-export function desktopCommand(notification: Notification, env: Environment): Command | undefined {
+export function desktopCommand(notification: Notification, sound: boolean, env: Environment): Command | undefined {
   const { title, body } = notification;
   if (env.platform === "darwin") {
     const program = findProgram(env, ["terminal-notifier", "osascript"]);
     if (program === "terminal-notifier") {
-      return { command: program, args: ["-title", title, "-message", body, "-group", `hardhooks-${title}`] };
+      const args = ["-title", title, "-message", body, "-group", `hardhooks-${title}`];
+      return { command: program, args: sound ? [...args, "-sound", "default"] : args };
     }
     if (program === "osascript") {
-      return { command: program, args: [...appleScript.flatMap((line) => ["-e", line]), title, body] };
+      return { command: program, args: [...appleScript(sound).flatMap((line) => ["-e", line]), title, body] };
     }
     return undefined;
   }
@@ -73,11 +84,12 @@ export function desktopCommand(notification: Notification, env: Environment): Co
     if (findProgram(env, ["powershell.exe"]) === undefined) return undefined;
     return {
       command: "powershell.exe",
-      args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", toastScript],
+      args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", toastScript(sound)],
       env: { ...env.env, HARDHOOKS_NOTIFY_TITLE: title, HARDHOOKS_NOTIFY_BODY: body },
     };
   }
   // Linux, the BSDs and other freedesktop systems.
   if (findProgram(env, ["notify-send"]) === undefined) return undefined;
-  return { command: "notify-send", args: ["--app-name=hardhooks", "--", title, body] };
+  const hint = sound ? "--hint=string:sound-name:message-new-instant" : "--hint=boolean:suppress-sound:true";
+  return { command: "notify-send", args: ["--app-name=hardhooks", hint, "--", title, body] };
 }

@@ -44,6 +44,10 @@
               "type": "number",
               "minimum": 0
             },
+            "sound": {
+              "description": "Play the platform's notification sound with desktop notifications.",
+              "type": "boolean"
+            },
             "webhook": {
               "description": "Also post each notification to this webhook (opt-in).",
               "type": "object",

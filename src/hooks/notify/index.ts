@@ -17,6 +17,7 @@ const optionsSchema = s.object({
     minimum: 0,
     description: "Notify at Stop only when the turn ran longer than this many seconds.",
   }),
+  sound: s.boolean({ description: "Play the platform's notification sound with desktop notifications." }),
   webhook: s.optional(
     s.object(
       {
@@ -71,7 +72,7 @@ function start({ command, args, env }: Command, environment: Environment): void 
  * to its own terminal from our `terminalSequence` output.
  */
 function deliver(notification: Notification, options: Options, env: Environment): Decision | undefined {
-  const native = desktopCommand(notification, env);
+  const native = desktopCommand(notification, options.sound, env);
   if (native) start(native, env);
   if (options.webhook) start(webhookCommand(notification, options.webhook), env);
   return native ? undefined : terminalSequence(osc9(notification));
@@ -84,8 +85,8 @@ export const notify = defineHook({
   failMode: "open",
   optionsSchema,
   defaults: {
-    standard: { enabled: false, options: { thresholdSeconds: 30 } },
-    strict: { enabled: true, options: { thresholdSeconds: 30 } },
+    standard: { enabled: false, options: { thresholdSeconds: 30, sound: true } },
+    strict: { enabled: true, options: { thresholdSeconds: 30, sound: true } },
   },
   run(event, options, env) {
     const title = basename(event.cwd);
