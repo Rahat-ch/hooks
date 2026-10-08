@@ -5,7 +5,7 @@
 import { resolve } from "node:path";
 import { parse, type Command, type ParsedScript, type Redirection as AstRedirection, type Statement } from "unbash";
 import type { AnalyzeOptions, Redirection, ShellAnalysis, SimpleCommand } from "./index";
-import { expandWord, pureEnv, type ExpansionEnv, type Field } from "./words";
+import { expandWord, type ExpansionEnv, type Field } from "./words";
 
 class AnalysisError extends Error {}
 

@@ -27,11 +27,6 @@ export interface ExpansionEnv {
   scan(node: unknown): void;
 }
 
-/** Expansion with no side effects: nested scripts are neither analysed nor resolved. */
-export function pureEnv(vars: ReadonlyMap<string, string>, home: string | undefined): ExpansionEnv {
-  return { vars, home, runScript: () => undefined, scan: () => {} };
-}
-
 function expandTilde(text: string, home: string | undefined): string {
   if (home === undefined) return text;
   if (text === "~") return home;
