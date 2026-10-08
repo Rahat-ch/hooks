@@ -181,7 +181,7 @@ Tells the Host where it is when a session starts, and again after compaction.
 
 | Option | Type | Default (both Presets) | |
 | --- | --- | --- | --- |
-| `files` | string[] | `[]` | Files, relative to the project, whose contents are added after the git summary. They share the 1 KB budget. |
+| `files` | string[] | `[]` | Files, relative to the project, whose contents are added after the git summary. They share the 1 KB budget. A file outside the project (an absolute path, `..`, or a symlink out of it) or one [protect-secrets](#protect-secrets) protects is left out with a one-line note, whichever config names it. |
 | `commands` | string[][] | `[]` | Commands whose output is added after the files, each an argument list run without a shell (`["gh", "pr", "list"]`) with a 3 s timeout. They share the 1 KB budget. |
 
 ### check

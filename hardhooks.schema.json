@@ -236,7 +236,7 @@
               "type": "boolean"
             },
             "files": {
-              "description": "Files, relative to the project, whose contents are added after the git summary. They share its 1 KB budget.",
+              "description": "Files, relative to the project, whose contents are added after the git summary. They share its 1 KB budget. A file outside the project (absolute, `..`, or a symlink out of it), or one protect-secrets protects, is left out with a note.",
               "type": "array",
               "items": {
                 "type": "string"

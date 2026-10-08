@@ -73,13 +73,16 @@ export interface Hook<Options = Record<string, never>> {
   /**
    * Decide for one Event. Return undefined for "nothing to say". May be async.
    * Before running a command it autodetected from the project's files, a Hook
-   * asks `trust.mayRun` (ADR-0005).
+   * asks `trust.mayRun` (ADR-0005). `config` is the whole resolved config, for
+   * a Hook that must honour another Hook's options (session-context checks
+   * files against protect-secrets' patterns); read your own from `options`.
    */
   run(
     event: HookEvent,
     options: Options,
     env: Environment,
     trust: ProjectTrust,
+    config: ResolvedConfig,
   ): Decision | undefined | Promise<Decision | undefined>;
   /**
    * Optional: called once every selected Hook has decided and the Host output

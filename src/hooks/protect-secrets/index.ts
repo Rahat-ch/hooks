@@ -29,13 +29,14 @@ export interface ProtectSecretsOptions {
   ignoreFiles: string[];
 }
 
-function describe(match: SecretMatch): string {
+/** Where a matched pattern comes from, for a reason: "built-in", "your `protect` option" or an ignore file's name. */
+export function describeSource(match: SecretMatch): string {
   return match.source === "built-in" ? "built-in" : match.source === "protect" ? "your `protect` option" : match.source;
 }
 
 function reasonFor(path: string, match: SecretMatch): string {
   return (
-    `\`${path}\` matches the protected pattern \`${match.pattern}\` (${describe(match)}), so it may not be read or written. ` +
+    `\`${path}\` matches the protected pattern \`${match.pattern}\` (${describeSource(match)}), so it may not be read or written. ` +
     "Secrets must not enter the conversation or be overwritten. If this file holds no secrets, " +
     "ask the user to add it to `hooks.protect-secrets.allow` in .hardhooks.json."
   );

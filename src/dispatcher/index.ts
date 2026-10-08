@@ -133,7 +133,7 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
           return false;
         },
       };
-      const run = await runHook(hook, () => hook.run(event, settings.options, env, projectTrust));
+      const run = await runHook(hook, () => hook.run(event, settings.options, env, projectTrust, config));
       if (skipped.length > 0 && noticeDue(env, trust.status().root, event.sessionId, hook.name)) {
         const notice = message(`skipped ${skipped.join(", ")}: ${untrustedReason(trust.status())}.`);
         return { run, notice: { hook: hook.name, decision: notice } };
