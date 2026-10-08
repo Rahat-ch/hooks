@@ -8,7 +8,9 @@
     "hardhooks": "dist/hardhooks.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    ".claude-plugin/plugin.json",
+    "hooks"
   ],
   "engines": {
     "node": ">=20"
