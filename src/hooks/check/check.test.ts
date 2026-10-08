@@ -56,6 +56,30 @@ describe("check", () => {
     expect(Buffer.byteLength(reason!)).toBeLessThan(1500);
   });
 
+  describe("failing open", () => {
+    it("allows Stop with a warning when the command times out, even if it left children holding its output", { timeout: 15_000 }, async () => {
+      const env = realEnvironment();
+      const hang =
+        "require('child_process').spawn(process.execPath, ['-e', 'setInterval(function(){}, 1000)'], { stdio: 'inherit' }); setInterval(function(){}, 1000)";
+      enableCheck(env, { command: node(hang), timeoutSeconds: 1 });
+
+      const started = Date.now();
+      const result = await runEvent(claudeCode.stop(), { env });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(observe(result).decision).toBe("none");
+      expectMessage(result, /timed out after 1s/);
+    });
+
+    it("allows Stop with a warning when the command can't be found", async () => {
+      const env = realEnvironment();
+      enableCheck(env, { command: "hardhooks-no-such-check-command --all" });
+
+      const result = await runEvent(claudeCode.stop(), { env });
+      expect(observe(result).decision).toBe("none");
+      expectMessage(result, /could not run/i);
+    });
+  });
+
   describe("loop protection", () => {
     const failing = node("console.log('still red'); process.exit(1)");
 

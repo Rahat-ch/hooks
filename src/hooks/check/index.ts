@@ -19,6 +19,12 @@ const optionsSchema = s.object({
         "Command line to run, through the platform shell (sh -c on POSIX, cmd.exe /d /s /c on Windows). Omit to autodetect.",
     }),
   ),
+  timeoutSeconds: s.number({
+    integer: true,
+    minimum: 1,
+    description:
+      "Seconds before the check command is killed and the Host may stop unchecked. Keep it below the Host's hook timeout (Claude Code: 600).",
+  }),
   outputBytes: s.number({
     integer: true,
     minimum: 200,
@@ -35,7 +41,10 @@ const optionsSchema = s.object({
 
 type CheckOptions = s.Infer<typeof optionsSchema>;
 
-const presetOptions: CheckOptions = { outputBytes: 4000, maxBlocks: 3 };
+const presetOptions: CheckOptions = { timeoutSeconds: 300, outputBytes: 4000, maxBlocks: 3 };
+
+/** Exit codes shells use for "command not found": 127 for sh, 9009 for cmd.exe. */
+const notFoundExitCodes = new Set([127, 9009]);
 
 export const check = defineHook<CheckOptions>({
   name: "check",
@@ -68,7 +77,20 @@ export const check = defineHook<CheckOptions>({
       return message(`${chosen} was still failing after ${blocks} attempts, so check let the Host stop. Run it to see the failures.`);
     }
 
-    const result = await env.processRunner.run(command, [], { cwd: event.cwd, env: env.env, shell: true });
+    const result = await env.processRunner.run(command, [], {
+      cwd: event.cwd,
+      env: env.env,
+      shell: true,
+      timeoutMs: options.timeoutSeconds * 1000,
+    });
+    // Fail open (ADR-0004): a check that can't give an answer never holds the Host.
+    if (result.timedOut) {
+      return message(`${chosen} timed out after ${options.timeoutSeconds}s, so check let the Host stop unchecked.`);
+    }
+    if (result.spawnError !== undefined || result.exitCode === null || notFoundExitCodes.has(result.exitCode)) {
+      const why = result.spawnError ?? (truncateOutput(result.stderr, 300) || `exit ${result.exitCode}`);
+      return message(`could not run ${chosen} (${why}), so check let the Host stop unchecked.`);
+    }
     if (result.exitCode === 0) {
       state.setConsecutiveBlocks(session, event.name, 0);
       state.recordPass(event.cwd, command, fingerprint);

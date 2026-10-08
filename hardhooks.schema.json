@@ -32,6 +32,11 @@
               "description": "Command line to run, through the platform shell (sh -c on POSIX, cmd.exe /d /s /c on Windows). Omit to autodetect.",
               "type": "string"
             },
+            "timeoutSeconds": {
+              "description": "Seconds before the check command is killed and the Host may stop unchecked. Keep it below the Host's hook timeout (Claude Code: 600).",
+              "type": "integer",
+              "minimum": 1
+            },
             "outputBytes": {
               "description": "Most bytes of failure output to put in the block reason, which enters the Host's context.",
               "type": "integer",

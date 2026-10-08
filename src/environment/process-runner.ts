@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { ProcessResult, ProcessRunner, RunOptions } from "./index";
 
 function childEnv(env: RunOptions["env"]): NodeJS.ProcessEnv | undefined {
@@ -8,7 +8,25 @@ function childEnv(env: RunOptions["env"]): NodeJS.ProcessEnv | undefined {
   return out;
 }
 
-/** Runs real processes with node:child_process. No shell is involved. */
+/** Kill a process and everything it started: its process group on POSIX, its tree via taskkill on Windows. */
+function killTree(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } else {
+      process.kill(-pid, "SIGKILL");
+    }
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/** Runs real processes with node:child_process. No shell is involved unless `shell` is set. */
 export const nodeProcessRunner: ProcessRunner = {
   run(command, args, options = {}) {
     return new Promise<ProcessResult>((resolve) => {
@@ -29,13 +47,20 @@ export const nodeProcessRunner: ProcessRunner = {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         shell: options.shell ?? false,
+        // Its own process group on POSIX, so a timeout can kill everything it started.
+        detached: process.platform !== "win32",
       });
       const timer =
         options.timeoutMs === undefined
           ? undefined
           : setTimeout(() => {
               timedOut = true;
-              child.kill("SIGKILL");
+              killTree(child.pid);
+              // Grandchildren (a shell's commands, npm's scripts) may survive the kill
+              // and hold our pipes open, so don't wait for "close".
+              child.stdout.destroy();
+              child.stderr.destroy();
+              finish({ exitCode: null, stdout, stderr, timedOut });
             }, options.timeoutMs);
 
       child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
