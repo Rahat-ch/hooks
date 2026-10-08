@@ -1,12 +1,22 @@
 /**
  * format-on-edit (fails open): after the Host edits or writes a file, format
  * just that file with the project's own formatter. Never installs anything,
- * never blocks, adds no context; any failure means the file is left as is.
+ * never blocks, adds no context; no formatter, a formatter error, a timeout
+ * or a missing binary all leave the file as it is, silently (ADR-0004).
+ *
+ * Detection: walk up from the file's directory to the repository root (the
+ * nearest directory with `.git`), and in each directory check, in order, the
+ * formatters that handle the file's extension: prettier, biome, ruff, black,
+ * gofmt, rustfmt, dprint. The first config found wins, so the config nearest
+ * the file decides. The formatter runs from that config's directory.
+ *
+ * Binaries: Node formatters come from the nearest `node_modules/<package>`
+ * (run as `node <package bin script>`), Python ones from the nearest `.venv`
+ * or `venv`, falling back to PATH; gofmt and rustfmt always come from PATH.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import * as s from "../../config/schema";
-import type { Environment } from "../../environment";
 import { defineHook } from "../hook";
 
 /** A formatter invocation: program, arguments, and the directory to run it in. */
@@ -38,7 +48,6 @@ interface Where {
   platform: NodeJS.Platform;
 }
 
-const exists = (path: string) => existsSync(path);
 
 function readText(path: string): string | undefined {
   try {
@@ -59,7 +68,7 @@ function readJson(path: string): Record<string, unknown> | undefined {
   }
 }
 
-const anyExists = (dir: string, names: readonly string[]) => names.some((name) => exists(join(dir, name)));
+const anyExists = (dir: string, names: readonly string[]) => names.some((name) => existsSync(join(dir, name)));
 
 /** Whether `dir/pyproject.toml` has a `[tool.<name>]` table (or a subtable of it). */
 function pyprojectHasTool(dir: string, name: string): boolean {
@@ -73,7 +82,7 @@ function searchDirs(file: string): string[] {
   let dir = dirname(file);
   for (;;) {
     dirs.push(dir);
-    if (exists(join(dir, ".git"))) return dirs;
+    if (existsSync(join(dir, ".git"))) return dirs;
     const parent = dirname(dir);
     if (parent === dir) return dirs;
     dir = parent;
@@ -104,7 +113,7 @@ function pythonTool({ dirs, platform }: Where, bin: string): Program {
   for (const dir of dirs) {
     for (const venv of [".venv", "venv"]) {
       const path = join(dir, venv, relative);
-      if (exists(path)) return { command: path, prefix: [] };
+      if (existsSync(path)) return { command: path, prefix: [] };
     }
   }
   return { command: bin, prefix: [] };
@@ -221,11 +230,11 @@ export const formatOnEdit = defineHook({
     standard: { enabled: true, options: { timeoutMs: 10_000 } },
     strict: { enabled: true, options: { timeoutMs: 10_000 } },
   },
-  async run(event, options, env: Environment) {
+  async run(event, options, env) {
     const filePath = event.tool?.filePath;
     if (filePath === undefined) return undefined;
     const file = resolve(event.cwd, filePath);
-    if (!exists(file)) return undefined;
+    if (!existsSync(file)) return undefined;
     const invocation =
       options.command !== undefined && options.command.length > 0
         ? configured(options.command, file, event.cwd)

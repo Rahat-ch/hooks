@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 import type { ProcessResult } from "../../environment";
 import {
   claudeCode,
+  expectFixture,
   expectNoDecision,
   fakeEnvironment,
+  loadFixtures,
   recordingProcessRunner,
   runEvent,
   writeRepoConfig,
@@ -88,6 +90,29 @@ describe("format-on-edit", () => {
     expect(read(file)).toBe("x = 1\n");
     expect(runner.runs).toHaveLength(1);
     expect(runner.runs[0]!.args).toContain("format");
+  });
+
+  it.each([
+    { tool: "Edit", input: { file_path: "src/a.ts", old_string: "a", new_string: "b" } },
+    { tool: "MultiEdit", input: { file_path: "src/a.ts", edits: [] } },
+  ])("formats after $tool too, resolving a relative path against the project", async ({ tool, input }) => {
+    const runner = fakeFormatter("prettier", "formatted\n");
+    const env = project({ ".prettierrc": "{}", "src/a.ts": "b\n" }, { processRunner: runner });
+
+    expectNoDecision(await runEvent(claudeCode.postToolUse(tool, input), { env }));
+
+    expect(read(join(env.cwd, "src", "a.ts"))).toBe("formatted\n");
+  });
+
+  it("ignores tools that do not edit files, and runs only after the edit", async () => {
+    const runner = recordingProcessRunner();
+    const env = project({ ".prettierrc": "{}", "a.ts": "" }, { processRunner: runner });
+    const file = join(env.cwd, "a.ts");
+
+    expectNoDecision(await runEvent(claudeCode.postToolUse("Bash", { command: `touch ${file}` }), { env }));
+    expectNoDecision(await runEvent(claudeCode.postToolUse("Read", { file_path: file }), { env }));
+    expectNoDecision(await runEvent(claudeCode.preToolUse("Write", { file_path: file, content: "" }), { env }));
+    expect(runner.runs).toEqual([]);
   });
 
   describe("detects the formatter from project config", () => {
@@ -277,6 +302,10 @@ describe("format-on-edit", () => {
       expect(runner.runs).toHaveLength(1);
       expect(read(file)).toBe("x=(\n");
     });
+  });
+
+  it.each(loadFixtures(new URL("./fixtures", import.meta.url)))("fixture $file: $description", async (fixture) => {
+    expectFixture(await runEvent(JSON.stringify(fixture.payload), { event: fixture.event }), fixture);
   });
 
   describe("prefers project-local binaries", () => {
