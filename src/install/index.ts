@@ -11,7 +11,7 @@ import type { Environment } from "../environment";
 import { isGitIgnored } from "../git";
 import type { Hook } from "../hooks/hook";
 import { hooks as registeredHooks } from "../hooks/registry";
-import { projectRoot as projectRootOf } from "../trust";
+import { projectRoot } from "../project";
 import { untrustedNote } from "../trust/command";
 import { unifiedDiff } from "./diff";
 import {
@@ -48,11 +48,6 @@ export interface InstallRequest {
 
 
 
-/** The project directory: the repository root above `env.cwd` (`.git` dir or file), else `env.cwd`. */
-export function projectRoot(env: Environment): string {
-  return projectRootOf(env.cwd);
-}
-
 /**
  * The settings file for a scope. `user`: `$CLAUDE_CONFIG_DIR/settings.json`,
  * default `~/.claude/settings.json`. `project`: `.claude/settings.json` at
@@ -60,7 +55,7 @@ export function projectRoot(env: Environment): string {
  */
 export function settingsPath(env: Environment, scope: InstallScope): string {
   if (scope === "user") return join(env.env.CLAUDE_CONFIG_DIR || join(env.home, ".claude"), "settings.json");
-  return join(projectRoot(env), ".claude", "settings.json");
+  return join(projectRoot(env.cwd), ".claude", "settings.json");
 }
 
 /**
@@ -70,7 +65,7 @@ export function settingsPath(env: Environment, scope: InstallScope): string {
  * to be committed (Claude Code git-ignores it when it creates it).
  */
 export function localSettingsPath(env: Environment): string {
-  return join(projectRoot(env), ".claude", "settings.local.json");
+  return join(projectRoot(env.cwd), ".claude", "settings.local.json");
 }
 
 /**
@@ -85,7 +80,7 @@ export function bundleReference(env: Environment, scope: InstallScope, bundlePat
   if (scope !== "project") return bundlePath;
   const slashes = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
   const fold = (path: string) => (env.platform === "win32" ? path.toLowerCase() : path);
-  const root = slashes(projectRoot(env)) + "/";
+  const root = slashes(projectRoot(env.cwd)) + "/";
   const bundle = slashes(bundlePath);
   if (!fold(bundle).startsWith(fold(root))) return bundlePath;
   return "${CLAUDE_PROJECT_DIR}/" + bundle.slice(root.length);
@@ -292,7 +287,7 @@ async function initLocal(request: InstallRequest, entries: readonly Entry[], bun
     };
   });
   if (!refused && entries.length > 0) {
-    const ignored = await isGitIgnored(env, projectRoot(env), local);
+    const ignored = await isGitIgnored(env, projectRoot(env.cwd), local);
     if (ignored === false) {
       request.stdout(
         `Warning: git doesn't ignore ${local}. Add \`.claude/settings.local.json\` to .gitignore so this machine's path isn't committed.\n`,

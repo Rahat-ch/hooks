@@ -10,7 +10,8 @@ import type { ResolvedConfig } from "../config";
 import type { Environment } from "../environment";
 import type { EventName } from "../event";
 import type { Hook } from "../hooks/hook";
-import { localSettingsPath, projectRoot, settingsPath } from "../install";
+import { localSettingsPath, settingsPath } from "../install";
+import { projectRoot } from "../project";
 import { isHardhooksHandler, isPortableBundleRef, wantedEntries } from "../install/entries";
 import { toolKind } from "../hosts/claude-code";
 
@@ -93,7 +94,7 @@ function bundleFile(script: string, root: string): string | undefined {
 const isAre = (names: readonly string[]) => `${names.join(", ")} ${names.length === 1 ? "is" : "are"}`;
 
 export function installWarnings(env: Environment, hooks: readonly Hook<any>[], config: ResolvedConfig): string[] {
-  const root = projectRoot(env);
+  const root = projectRoot(env.cwd);
   const shared = settingsPath(env, "project");
   const files = [settingsPath(env, "user"), shared, localSettingsPath(env)];
   const installed = readInstalled(files);

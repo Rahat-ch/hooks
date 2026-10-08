@@ -16,17 +16,6 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, rmdirSync, rmSync }
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Environment } from "../../environment";
 
-/** The repository root holding `cwd`, or `cwd` outside a repository. */
-export function projectRoot(cwd: string): string {
-  if (!isAbsolute(cwd)) return cwd;
-  for (let dir = cwd; ; ) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return cwd;
-    dir = parent;
-  }
-}
-
 /** `<name>-<12 hex digits of sha256(path)>`, safe as a directory name on every platform. */
 function projectKey(root: string): string {
   const name = basename(root).replace(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "").slice(0, 40) || "project";

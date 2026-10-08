@@ -17,11 +17,10 @@
  * - Blocks input it can't analyse, and blocks when an ignore file exists but
  *   can't be read (ADR-0004).
  */
-import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
 import { block, type Decision } from "../../decision";
 import * as s from "../../config/schema";
 import { defaultIgnoreFiles, resolvePath, secretsMatcher, type SecretMatch } from "../../secrets";
+import { projectRoot } from "../../project";
 import { analyzeShell } from "../../shell";
 import { defineHook } from "../hook";
 import { ownStateShellFinding, ownStateWrite, type OwnStateFinding } from "./own-state";
@@ -48,21 +47,6 @@ function reasonFor(path: string, match: SecretMatch): string {
     "Secrets must not enter the conversation or be overwritten. If this file holds no secrets, " +
     "ask the user to add it to `hooks.protect-secrets.allow` in .hardhooks.json."
   );
-}
-
-/**
- * The project root, where ignore files live and relative patterns are
- * anchored: the repository root (the nearest directory up from `cwd` holding
- * `.git`), or `cwd` itself outside a repository.
- */
-function projectRoot(cwd: string): string {
-  if (!isAbsolute(cwd)) return cwd;
-  for (let dir = cwd; ; ) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return cwd;
-    dir = parent;
-  }
 }
 
 const defaults: ProtectSecretsOptions = { protect: [], allow: [], ignoreFiles: [...defaultIgnoreFiles] };
@@ -92,6 +76,7 @@ export const protectSecrets = defineHook<ProtectSecretsOptions>({
   run(event, options, env) {
     const tool = event.tool;
     if (tool === undefined) return undefined;
+    // The project root is where ignore files live and relative patterns are anchored.
     const matcher = secretsMatcher({ projectDir: projectRoot(event.cwd), home: env.home, ...options });
     if (tool.kind === "shell") {
       if (tool.command === undefined) return undefined;

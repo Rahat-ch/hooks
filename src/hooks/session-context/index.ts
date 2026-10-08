@@ -22,7 +22,7 @@ import { addContext } from "../../decision";
 import type { ProcessResult, ProcessRunner } from "../../environment";
 import { gitStatus, recentCommitSubjects, type GitStatus } from "../../git";
 import { secretsMatcher, type SecretsMatcher } from "../../secrets";
-import { projectRoot } from "../../trust";
+import { projectRoot } from "../../project";
 import { defineHook } from "../hook";
 import { describeSource, protectSecrets } from "../protect-secrets";
 

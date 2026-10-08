@@ -7,12 +7,12 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import type { Environment } from "../environment";
-import { projectRoot } from "../install";
+import { projectRoot } from "../project";
 import { parseCaseFile, type TestCase } from "./cases";
 
 /** Where `hardhooks test` looks for case files without `--cases`. */
 export function defaultCasesDir(env: Environment): string {
-  return join(projectRoot(env), ".hardhooks", "tests");
+  return join(projectRoot(env.cwd), ".hardhooks", "tests");
 }
 
 export type UserCases =
@@ -20,7 +20,7 @@ export type UserCases =
   | { readonly ok: false; readonly errors: string[] };
 
 export function loadUserCases(env: Environment, casesPath: string | undefined): UserCases {
-  const root = projectRoot(env);
+  const root = projectRoot(env.cwd);
   const path = casesPath === undefined ? defaultCasesDir(env) : resolve(env.cwd, casesPath);
   const location = relative(env.cwd, path) || ".";
 

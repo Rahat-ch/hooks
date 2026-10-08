@@ -3,8 +3,9 @@
  * the repo's `.hardhooks.json` and the optional user-level config.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { Environment } from "../environment";
+import { searchUpwards } from "../project";
 import type { Hook } from "../hooks/hook";
 import { presetNames, type HookOverrides, type PresetName, type ResolvedConfig } from "./index";
 import * as s from "./schema";
@@ -50,15 +51,9 @@ export function userConfigPath(env: Environment): string {
  * stopping at the repository root (the first directory containing `.git`).
  */
 export function findRepoConfig(env: Environment): string | undefined {
-  let dir = resolve(env.cwd);
-  for (;;) {
-    const candidate = join(dir, repoConfigFileName);
-    if (existsSync(candidate)) return candidate;
-    if (existsSync(join(dir, ".git"))) return undefined;
-    const parent = dirname(dir);
-    if (parent === dir) return undefined;
-    dir = parent;
-  }
+  return searchUpwards(resolve(env.cwd))
+    .map((dir) => join(dir, repoConfigFileName))
+    .find((candidate) => existsSync(candidate));
 }
 
 /** What a config file may contain, after validation. */

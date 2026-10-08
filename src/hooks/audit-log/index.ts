@@ -20,7 +20,8 @@ import * as s from "../../config/schema";
 import { defineHook } from "../hook";
 import { auditEntry } from "./entry";
 import { matcherFor, scrubPayload } from "./scrub";
-import { appendEntry, logFile, projectRoot, prune } from "./store";
+import { projectRoot } from "../../project";
+import { appendEntry, logFile, prune } from "./store";
 
 const optionsSchema = s.object({
   maxOutputBytes: s.number({

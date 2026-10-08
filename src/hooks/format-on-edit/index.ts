@@ -24,6 +24,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import * as s from "../../config/schema";
+import { searchUpwards } from "../../project";
 import { defineHook } from "../hook";
 
 /** A formatter invocation: program, arguments, and the directory to run it in. */
@@ -85,19 +86,6 @@ const firstExisting = (dir: string, names: readonly string[]) => names.find((nam
 function pyprojectTool(dir: string, name: string): string | undefined {
   const text = readText(join(dir, "pyproject.toml"));
   return text !== undefined && new RegExp(`^\\s*\\[tool\\.${name}[\\].]`, "m").test(text) ? "pyproject.toml" : undefined;
-}
-
-/** The file's directory and its ancestors, up to and including the nearest one with `.git` (or the filesystem root). */
-function searchDirs(file: string): string[] {
-  const dirs: string[] = [];
-  let dir = dirname(file);
-  for (;;) {
-    dirs.push(dir);
-    if (existsSync(join(dir, ".git"))) return dirs;
-    const parent = dirname(dir);
-    if (parent === dir) return dirs;
-    dir = parent;
-  }
 }
 
 /**
@@ -211,7 +199,7 @@ function detect(file: string, platform: NodeJS.Platform): Invocation | undefined
   const ext = extname(file).toLowerCase();
   const candidates = formatters.filter((formatter) => formatter.extensions.has(ext));
   if (candidates.length === 0) return undefined;
-  const dirs = searchDirs(file);
+  const dirs = searchUpwards(dirname(file));
   for (const dir of dirs) {
     const formatter = candidates.find((candidate) => candidate.configuredIn(dir) !== undefined);
     if (formatter !== undefined) {

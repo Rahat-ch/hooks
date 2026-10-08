@@ -20,15 +20,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { findRepoConfig } from "../config/load";
 import type { Environment } from "../environment";
-
-/** The project a directory belongs to: the nearest ancestor with `.git` (dir or file), else the directory itself. */
-export function projectRoot(dir: string): string {
-  const start = resolve(dir);
-  for (let current = start; ; current = dirname(current)) {
-    if (existsSync(join(current, ".git"))) return current;
-    if (dirname(current) === current) return start;
-  }
-}
+import { projectRoot } from "../project";
 
 /** How much of a file the trust hash covers. */
 type Coverage =
@@ -173,7 +165,7 @@ function readRecord(env: Environment, root: string): TrustRecord | undefined {
 
 /** Whether the project containing `dir` is trusted, and what its trust covers. Never throws. */
 export function trustStatus(env: Environment, dir: string): TrustStatus {
-  const root = canonical(projectRoot(dir));
+  const root = canonical(projectRoot(resolve(dir)));
   const { repoConfig, inputs } = inputsFor(env, root, dir);
   const record = readRecord(env, root);
   if (record === undefined) return { root, state: "untrusted", repoConfig, inputs, changed: [] };
@@ -201,7 +193,7 @@ export function grantTrust(env: Environment, dir: string): TrustStatus {
 
 /** Stop trusting the project containing `dir`. Resolves to whether it was trusted (or changed) before. */
 export function revokeTrust(env: Environment, dir: string): boolean {
-  const root = canonical(projectRoot(dir));
+  const root = canonical(projectRoot(resolve(dir)));
   const path = recordPath(env, root);
   const existed = existsSync(path);
   rmSync(path, { force: true });
