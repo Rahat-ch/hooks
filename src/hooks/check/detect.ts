@@ -41,7 +41,7 @@ function fromPackageJson(cwd: string): DetectedCommand | undefined {
   const pm = packageManager(cwd);
   return {
     command: present.map((name) => `${pm} run ${name}`).join(" && "),
-    source: `package.json scripts (${present.join(", ")})`,
+    source: `package.json scripts ${present.join(", ")}`,
   };
 }
 
