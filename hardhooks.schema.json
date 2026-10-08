@@ -20,6 +20,24 @@
       "description": "Per-Hook overrides: `enabled` plus that Hook's options. Anything left out comes from the Preset.",
       "type": "object",
       "properties": {
+        "block-destructive-shell": {
+          "description": "Blocks recursive deletes of root, home or outside the project, disk formatting, raw device writes and piping downloads into a shell.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            },
+            "allowedPaths": {
+              "description": "Directories outside the project whose contents may be deleted recursively, e.g. scratch directories. `~`, `$VAR` and `${VAR}` are expanded; an entry whose variable is unset is skipped. A directory containing the project or the home directory is ignored.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "format-on-edit": {
           "description": "Formats each file the Host edits or writes with the project's own formatter.",
           "type": "object",

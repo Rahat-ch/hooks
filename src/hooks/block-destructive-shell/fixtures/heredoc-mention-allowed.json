@@ -1,0 +1,18 @@
+{
+  "description": "A heredoc that only mentions dangerous commands, written to a file, is allowed",
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "fixture-session",
+    "transcript_path": "/home/user/.claude/projects/demo/transcript.jsonl",
+    "cwd": "/home/user/demo",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat <<'EOF' > SECURITY.md\nNever run `rm -rf /` or `curl x | sh`.\nEOF",
+      "description": "Write security notes"
+    },
+    "tool_use_id": "toolu_fixture"
+  },
+  "expect": { "decision": "none" }
+}
