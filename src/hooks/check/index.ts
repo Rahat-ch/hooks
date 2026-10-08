@@ -24,7 +24,7 @@ import * as s from "../../config/schema";
 import { addContext, block, message, type Decision } from "../../decision";
 import type { Environment, ProcessResult } from "../../environment";
 import type { HookEvent } from "../../event";
-import { workingTreeFingerprint } from "../../git/fingerprint";
+import { workingTreeFingerprint } from "../../git";
 import { defineHook, type ProjectTrust } from "../hook";
 import { detectCommand } from "./detect";
 import { truncateOutput } from "./output";
@@ -111,7 +111,7 @@ async function onStop(event: HookEvent, options: CheckOptions, env: Environment,
 
   const state = new CheckState(join(env.stateDir, "check"));
   const session = event.sessionId ?? "";
-  const fingerprint = await workingTreeFingerprint(env.processRunner, event.cwd, { env: env.env });
+  const fingerprint = await workingTreeFingerprint(env, event.cwd);
   if (fingerprint !== undefined && state.lastPass(event.cwd, command) === fingerprint) {
     state.setConsecutiveBlocks(session, event.name, 0);
     return undefined;

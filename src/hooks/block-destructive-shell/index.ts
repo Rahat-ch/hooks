@@ -24,13 +24,13 @@
 import { block, type Decision } from "../../decision";
 import * as s from "../../config/schema";
 import type { Environment } from "../../environment";
+import { GitQueries } from "../../git";
 import { analyzeShell } from "../../shell";
 import { defineHook } from "../hook";
 import { deleteFindings, type Finding } from "./deletes";
 import { deviceFindings } from "./devices";
 import { downloadFindings } from "./downloads";
 import { dynamicFindings } from "./dynamic";
-import { Repo } from "./repo";
 
 export interface BlockDestructiveShellOptions {
   allowedPaths: string[];
@@ -104,7 +104,7 @@ export const blockDestructiveShell = defineHook<BlockDestructiveShellOptions>({
         home: env.home,
         cwd: event.cwd,
         allowedPaths: options.allowedPaths.flatMap((path) => expandConfiguredPath(path, env) ?? []),
-        repo: new Repo(env),
+        git: new GitQueries(env),
         vars: env.env,
         source: command,
       })),

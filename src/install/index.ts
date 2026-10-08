@@ -292,7 +292,7 @@ async function initLocal(request: InstallRequest, entries: readonly Entry[], bun
     };
   });
   if (!refused && entries.length > 0) {
-    const ignored = await isGitIgnored(env.processRunner, projectRoot(env), local, { env: env.env });
+    const ignored = await isGitIgnored(env, projectRoot(env), local);
     if (ignored === false) {
       request.stdout(
         `Warning: git doesn't ignore ${local}. Add \`.claude/settings.local.json\` to .gitignore so this machine's path isn't committed.\n`,

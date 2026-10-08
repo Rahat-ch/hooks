@@ -217,8 +217,8 @@ export const sessionContext = defineHook({
   async run(event, options, env, _trust, config) {
     const gate = fileGate(event.cwd, env.home, config);
     const [status, subjects, files, commands] = await Promise.all([
-      gitStatus(env.processRunner, event.cwd),
-      recentCommitSubjects(env.processRunner, event.cwd, commitCount),
+      gitStatus(env, event.cwd),
+      recentCommitSubjects(env, event.cwd, commitCount),
       Promise.all(options.files.map((path) => readExtraFile(event.cwd, path, gate))),
       Promise.all(options.commands.map((argv) => runExtraCommand(env.processRunner, event.cwd, argv))),
     ]);

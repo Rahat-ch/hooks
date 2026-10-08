@@ -18,7 +18,7 @@
 import { basename, join } from "node:path";
 import { parseOptions, type SimpleCommand } from "../../shell";
 import { globBase, isFilesystemRoot, isWithin, resolveOperand, samePath, toPosixRelative, type PathContext } from "./paths";
-import type { Repo } from "./repo";
+import type { GitQueries } from "../../git";
 
 export interface Finding {
   readonly decision: "block" | "ask";
@@ -41,7 +41,8 @@ export interface DeleteContext extends PathContext {
   readonly cwd: string;
   /** Directories outside the project whose contents may be deleted, already expanded. */
   readonly allowedPaths: readonly string[];
-  readonly repo: Repo;
+  /** Git queries for this Event. */
+  readonly git: GitQueries;
   /** The Host's environment variables, which the command inherits. */
   readonly vars: Readonly<Record<string, string | undefined>>;
   /** The whole command line, to spot variables it assigns itself. */
@@ -218,7 +219,7 @@ async function judgeInside(
       reason: `\`${target.operand}\` recursively deletes files in a project without git, so they can't be recovered. Confirm this is intended.`,
     };
   }
-  const contents = await ctx.repo.contents(gitRoot, toPosixRelative(gitRoot, path), glob);
+  const contents = await ctx.git.pathContents(gitRoot, toPosixRelative(gitRoot, path), glob);
   if (contents === "ignored") return undefined;
   return {
     decision: "ask",
@@ -233,7 +234,11 @@ async function judgeInside(
 export async function deleteFindings(commands: readonly SimpleCommand[], ctx: DeleteContext): Promise<Finding[]> {
   const targets = commands.flatMap((command) => (command.executes ? (recursiveTargets(command, ctx.cwd) ?? []) : []));
   if (targets.length === 0) return [];
-  const gitRoot = await ctx.repo.topLevel(ctx.cwd);
+  // Deliberately git's own work tree, not projectRoot()'s nearest `.git`: the
+  // tracked/untracked answers come from git, with pathspecs relative to this
+  // root, so the two must agree (they differ under GIT_DIR/GIT_WORK_TREE, or
+  // with a `.git` git doesn't accept). Outside a repository: the Host's cwd.
+  const gitRoot = await ctx.git.topLevel(ctx.cwd);
   const project = gitRoot ?? ctx.cwd;
   const findings: Finding[] = [];
   for (const target of targets) {

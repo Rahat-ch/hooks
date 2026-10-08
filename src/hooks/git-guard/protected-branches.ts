@@ -1,10 +1,11 @@
 /**
  * Protected branches: which branch a commit or push in a command line would
- * land on, and whether that branch is protected. Asks real git (through the
- * injected process runner) for the current and default branch, and follows
+ * land on, and whether that branch is protected. Asks git (`GitQueries`)
+ * for the current and default branch, and follows
  * `git switch`/`git checkout` earlier in the same command line.
  */
 import type { Environment } from "../../environment";
+import { GitQueries } from "../../git";
 import { parseOptions } from "../../shell";
 
 export interface ProtectionOptions {
@@ -23,52 +24,10 @@ export interface GitInvocation {
   readonly config: readonly string[];
 }
 
-const GIT_TIMEOUT_MS = 5_000;
-
 export const pushOptionsWithValue = ["-o", "--push-option", "--repo", "--receive-pack", "--exec"];
 
 export function protectionEnabled(options: ProtectionOptions): boolean {
   return (options.protectedBranches?.length ?? 0) > 0 || options.protectDefaultBranch === true;
-}
-
-/** Read-only git queries, cached per directory for one Event. */
-class Repo {
-  private readonly cache = new Map<string, Promise<string | undefined>>();
-  constructor(private readonly env: Environment) {}
-
-  /** stdout of a successful git query; undefined when git fails or isn't installed. Throws on timeout. */
-  private query(cwd: string, args: string[]): Promise<string | undefined> {
-    const key = `${cwd}\0${args.join("\0")}`;
-    let result = this.cache.get(key);
-    if (result === undefined) {
-      result = this.env.processRunner
-        .run("git", args, {
-          cwd,
-          env: { ...this.env.env, GIT_OPTIONAL_LOCKS: "0" },
-          timeoutMs: GIT_TIMEOUT_MS,
-        })
-        .then((r) => {
-          if (r.timedOut) throw new Error(`\`git ${args.join(" ")}\` timed out`);
-          return r.exitCode === 0 ? r.stdout.trim() : undefined;
-        });
-      this.cache.set(key, result);
-    }
-    return result;
-  }
-
-  /** The checked-out branch; undefined when detached or not in a repo. */
-  currentBranch(cwd: string) {
-    return this.query(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  }
-
-  async defaultBranch(cwd: string) {
-    const head = await this.query(cwd, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
-    return head?.replace(/^origin\//, "");
-  }
-
-  async branchExists(cwd: string, name: string) {
-    return (await this.query(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])) !== undefined;
-  }
 }
 
 /** The branch a push refspec's destination names, or "HEAD" for the current branch. */
@@ -107,7 +66,7 @@ export async function protectedBranchViolations(
   options: ProtectionOptions,
   env: Environment,
 ): Promise<string[]> {
-  const repo = new Repo(env);
+  const repo = new GitQueries(env);
   const listed = new Set(options.protectedBranches ?? []);
   const isProtected = async (branch: string, cwd: string) =>
     listed.has(branch) || (options.protectDefaultBranch === true && branch === (await repo.defaultBranch(cwd)));
@@ -162,7 +121,7 @@ async function switchTarget(
   subcommand: string,
   args: readonly string[],
   cwd: string,
-  repo: Repo,
+  repo: GitQueries,
   listed: ReadonlySet<string>,
 ): Promise<string | null | undefined> {
   const creates = ["-b", "-B", "-c", "-C", "--create", "--force-create", "--orphan"];
