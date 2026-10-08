@@ -5,12 +5,14 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "./commands/command";
 import { initCommand, uninstallCommand } from "./commands/init";
 import { runCommand } from "./commands/run";
+import { testCommand } from "./commands/test";
 import { nodeEnvironment } from "./environment";
 
 /** CLI commands. One entry per line, sorted, so parallel additions merge cleanly. */
 const commands: Readonly<Record<string, Command>> = {
   init: initCommand,
   run: runCommand,
+  test: testCommand,
   uninstall: uninstallCommand,
 };
 
@@ -19,6 +21,8 @@ const usage = `usage: hardhooks <command>
 commands:
   init [--user] [--dry-run] [--yes]   write Host settings entries for the enabled Hooks
   run <Event>                         run the Hooks for one Event (reads the Host payload on stdin)
+  test [--cases <path>]               check the Hooks behave as configured: shipped fixtures plus
+                                      your cases (default .hardhooks/tests/*.json); exits 1 on failure
   uninstall [--user] [--dry-run] [--yes]
                                       remove the entries init wrote
 `;

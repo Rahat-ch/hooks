@@ -8,5 +8,6 @@
     "hook_event_name": "SessionStart",
     "source": "compact"
   },
-  "expect": { "decision": "none", "context": "^Today: \\d{4}-\\d{2}-\\d{2} \\(\\w+day\\)$" }
+  "expect": { "decision": "none", "context": "^Today: \\d{4}-\\d{2}-\\d{2} \\(\\w+day\\)$" },
+  "assumes": { "options": { "files": [], "commands": [] } }
 }
