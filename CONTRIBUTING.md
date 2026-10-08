@@ -11,36 +11,44 @@ You need Node 20 or later and npm.
 ```sh
 npm ci
 npm run typecheck
-npm test              # unit tests (vitest)
-npm run test:smoke    # builds dist/hardhooks.mjs, then runs the bundled CLI
-npm run check         # all three
+npm run test:e2e      # builds dist/hardhooks.mjs once; every test runs the real CLI
+npm test              # the in-process tests still being converted (#22)
+npm run test:smoke    # packaging checks on the bundled CLI
+npm run check         # all of the above
 ```
 
 To try your build in Claude Code, run `npm run build && claude --plugin-dir .`. To try it in another repo, run `node /path/to/hooks/dist/hardhooks.mjs init` from that repo.
 
-CI runs typecheck, unit and smoke tests on Linux, macOS and Windows, each on Node 20, 22 and 24. It also validates the packed Claude Code plugin. `dist/` is build output and is never committed.
+CI runs typecheck, e2e, unit and smoke tests on Linux, macOS and Windows, each on Node 20, 22 and 24. It also validates the packed Claude Code plugin. `dist/` is build output and is never committed.
 
 ## How the code is shaped
 
-- **The dispatcher is the seam.** `dispatch()` in `src/dispatcher/` takes an Event name, the raw Host payload and an `Environment` (cwd, home, env, platform, clock, process runner, state dir), and returns `{ stdout, stderr, exitCode }`. That's exactly what the Host sees. The CLI only wraps it.
+- **The dispatcher is the core.** `dispatch()` in `src/dispatcher/` takes an Event name, the raw Host payload and an `Environment` (cwd, home, env, platform, clock, process runner, state dir), and returns `{ stdout, stderr, exitCode }`. That's exactly what the Host sees. The CLI only wraps it.
 - **One directory per Hook.** `src/hooks/<name>/index.ts` exports `defineHook({...})`, next to `<name>.test.ts` and `fixtures/*.json`. Register it in `src/hooks/registry.ts`, one line per Hook, sorted by name.
 - **Hooks are Host-neutral.** They read the normalized `HookEvent`, match tools by kind (`shell`, `edit`, …), and return a Decision. They never write to stdout or exit the process, and they run external programs only through `env.processRunner`.
 - **Guards use shell analysis.** They go through `analyzeShell()` in `src/shell/` and never use regexes over the raw command line. Guards fail closed: when they can't decide, they block and say why ([ADR-0004](docs/adr/0004-guards-fail-closed.md)).
 - **Options are typed.** Each Hook declares `optionsSchema` and `defaults: { standard, strict }`. After changing a schema, run `npm run schema` to regenerate `hardhooks.schema.json`. A test fails if it drifts.
 
-## Tests assert what the Host sees
+## Tests run the real CLI and assert what the Host sees
 
-This is the rule that matters most. Drive the dispatcher with `runEvent` from `test/helpers/` and assert only Host-visible output, using `expectBlocked`, `expectAsked`, `expectNoDecision`, `expectContext` and `expectMessage`. Never assert on a Hook's internals. That way the protocol, the merge rules and the fail modes are tested every time, and refactors don't break tests.
+This is the rule that matters most ([ADR-0006](docs/adr/0006-tests-run-the-real-cli.md)). Every test spawns the bundled CLI, `node dist/hardhooks.mjs …`, exactly as a Host does: a payload on stdin, the project as the working directory, a temp home. Assert only what the Host or user sees: the Decision (`expectBlocked`, `expectAsked`, `expectNoDecision`, `expectContext`, `expectMessage`, `expectAllowedWithWarning`), stderr, and files hardhooks writes for the user. Never call internals, inject test-only Hooks or configs, or fake the clock in-process. That way the protocol, config lookup, the merge rules, the fail modes and the bundle itself are tested every time, and refactors don't break tests.
 
-The helpers are:
+The harness is in `test/e2e/helpers/`. A test makes its own `sandbox()`, a hermetic world under a temp dir:
 
-- `claudeCode.*` payload builders for each Event;
-- `fakeEnvironment()`, with temp dirs, a fixed clock and a recording process runner, or real processes with `processRunner: "real"`;
-- `hermeticGitEnvironment()` and `initGitRepo()` for real git in a temp repo, isolated from your own git config;
-- `writeRepoConfig` and `writeUserConfig`;
-- `loadFixtures` and `expectFixture`.
+```ts
+const box = sandbox({ git: true });                   // a real git repo, isolated from your git config
+box.writeRepoConfig({ preset: "strict" });             // or writeUserConfig, writeFile
+const result = await box.event(claudeCode.bash("git push origin main"));
+expectBlocked(result, /main/);
+```
 
-The install seam has its own tests: `runInit`/`runUninstall` against temp dirs, asserting the settings files and the printed diff.
+- `box.event(payload, { now?, env?, cwd? })` runs `hardhooks run <Event>`; `box.run(args)` runs any command.
+- `box.trust()` runs the real `hardhooks trust --yes`, for tests of a project's own commands.
+- `box.fakeProgram("npm", { exitCode: 1, stdout: "…" })` puts a fake on PATH that records each call (`calls()`, `waitForCalls()`); `fakeNodePackage` fakes prettier, biome or dprint. On Windows, programs hardhooks starts by bare name without a shell (git, notifiers, gofmt) can't be faked, so those tests are skipped there.
+- `box.auditLog()` reads what audit-log wrote: the detected Host and every Hook's Decision.
+- `sandbox({ now: "2026-01-01T09:00:00Z" })` fixes the CLI's clock through `HARDHOOKS_NOW`, the one testing knob in the product.
+
+The in-process tests (`runEvent`, `fakeEnvironment`, `runInit`, `runTrust` in `test/helpers/`) are being converted ([#22](https://github.com/Rahat-ch/hooks/issues/22)); don't add new ones.
 
 ## Fixtures and corpora
 
