@@ -15,7 +15,7 @@ import {
   fakeEnvironment,
   hermeticGitEnvironment,
   hostPayloadFields,
-  initRealGitRepo,
+  initGitRepo,
   observe,
   runEvent,
   writeProjectFile,
@@ -97,7 +97,7 @@ describe("dispatcher", () => {
 
     it("one ask plus one allow merges to ask", async () => {
       const env = hermeticGitEnvironment();
-      initRealGitRepo(env);
+      initGitRepo(env);
       writeProjectFile(env.cwd, ".gitignore", "node_modules/\n");
       writeProjectFile(env.cwd, "node_modules/x/index.js");
       const result = await runEvent(claudeCode.bash("rm -rf node_modules && git push --force-with-lease"), { env });

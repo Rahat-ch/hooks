@@ -6,7 +6,7 @@ import {
   expectFixture,
   expectNoDecision,
   hermeticGitEnvironment,
-  initRealGitRepo,
+  initGitRepo,
   loadFixtures,
   runEvent,
   writeProjectFile,
@@ -149,7 +149,7 @@ describe("block-destructive-shell", () => {
   describe("deletes inside the project", () => {
     function repo() {
       const env = hermeticGitEnvironment();
-      const git = initRealGitRepo(env);
+      const git = initGitRepo(env);
       writeProjectFile(env.cwd, ".gitignore", "node_modules/\ndist\n*.log\n");
       writeProjectFile(env.cwd, "src/index.ts");
       writeProjectFile(env.cwd, "src/lib/util.ts");

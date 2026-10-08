@@ -3,14 +3,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   claudeCode,
-  commit,
   expectContext,
   expectFixture,
   expectMessage,
   expectNoDecision,
   fakeEnvironment,
-  git,
-  initRepo,
+  hermeticGitEnvironment,
+  initGitRepo,
   loadFixtures,
   runEvent,
   writeProjectFile,
@@ -24,7 +23,7 @@ const now = "2026-03-14T12:00:00Z";
 
 describe("session-context", () => {
   it("outside a git repo, adds only today's date", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
+    const env = hermeticGitEnvironment({ now });
     const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);
     expect(context).not.toMatch(/branch|commit|uncommitted/i);
   });
@@ -39,10 +38,10 @@ describe("session-context", () => {
   });
 
   it("in a git repo, adds the branch, dirty files, last five commit subjects and the date", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
-    initRepo(env.cwd);
+    const env = hermeticGitEnvironment({ now });
+    const repo = initGitRepo(env, env.cwd, { initialCommit: false });
     for (const subject of ["First commit", "Second", "Third", "Fourth", "Fifth", "Sixth", "Add the parser"]) {
-      commit(env.cwd, subject);
+      repo.commit(subject);
     }
     writeProjectFile(env.cwd, "second.txt", "changed\n");
     writeProjectFile(env.cwd, "notes.md", "todo\n");
@@ -58,15 +57,15 @@ describe("session-context", () => {
   });
 
   it("says how far the branch is ahead of and behind its upstream", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
-    initRepo(env.cwd);
-    commit(env.cwd, "Base");
-    git(env.cwd, "switch", "--quiet", "--create", "feature", "--track", "main");
-    commit(env.cwd, "Feature one");
-    commit(env.cwd, "Feature two");
-    git(env.cwd, "switch", "--quiet", "main");
-    commit(env.cwd, "Main moved on");
-    git(env.cwd, "switch", "--quiet", "feature");
+    const env = hermeticGitEnvironment({ now });
+    const repo = initGitRepo(env, env.cwd, { initialCommit: false });
+    repo.commit("Base");
+    repo.git("switch", "--quiet", "--create", "feature", "--track", "main");
+    repo.commit("Feature one");
+    repo.commit("Feature two");
+    repo.git("switch", "--quiet", "main");
+    repo.commit("Main moved on");
+    repo.git("switch", "--quiet", "feature");
 
     const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /feature/);
     expect(context).toMatch(/ahead 2, behind 1 .*main/);
@@ -74,27 +73,27 @@ describe("session-context", () => {
   });
 
   it("names the commit when HEAD is detached", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
-    initRepo(env.cwd);
-    commit(env.cwd, "Only commit");
-    git(env.cwd, "switch", "--quiet", "--detach");
-    const sha = git(env.cwd, "rev-parse", "--short=7", "HEAD").trim();
+    const env = hermeticGitEnvironment({ now });
+    const repo = initGitRepo(env, env.cwd, { initialCommit: false });
+    repo.commit("Only commit");
+    repo.git("switch", "--quiet", "--detach");
+    const sha = repo.git("rev-parse", "--short=7", "HEAD").trim();
 
     expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), new RegExp(`detached at ${sha}`));
   });
 
   it.each(["startup", "resume", "clear", "compact"])("fires for the %s source", async (source) => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
-    initRepo(env.cwd);
-    commit(env.cwd, "Only commit");
+    const env = hermeticGitEnvironment({ now });
+    const repo = initGitRepo(env, env.cwd, { initialCommit: false });
+    repo.commit("Only commit");
     const { context } = expectContext(await runEvent(claudeCode.sessionStart(source), { env }), /2026-03-14/);
     expect(context).toMatch(/Branch: main/);
   });
 
   it("stays within the byte budget with many dirty files, naming some and counting all", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
-    initRepo(env.cwd);
-    commit(env.cwd, "Ünïcödé subject ".repeat(40));
+    const env = hermeticGitEnvironment({ now });
+    const repo = initGitRepo(env, env.cwd, { initialCommit: false });
+    repo.commit("Ünïcödé subject ".repeat(40));
     for (let i = 0; i < 300; i++) writeProjectFile(env.cwd, `a-rather-long-file-name-number-${i}-ä.txt`);
 
     const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);
@@ -106,7 +105,7 @@ describe("session-context", () => {
   });
 
   it("adds configured extra files", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
+    const env = hermeticGitEnvironment({ now });
     writeProjectFile(env.cwd, "docs/ORIENTATION.md", "Deploys go through the release train.\n");
     writeRepoConfig(env, { hooks: { "session-context": { files: ["docs/ORIENTATION.md"] } } });
 
@@ -115,7 +114,7 @@ describe("session-context", () => {
   });
 
   it("adds the output of configured extra commands, run without a shell", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
+    const env = hermeticGitEnvironment({ now });
     const command = [process.execPath, "-e", "console.log('Open pull requests: 3')"];
     writeRepoConfig(env, { hooks: { "session-context": { commands: [command] } } });
 
@@ -124,7 +123,7 @@ describe("session-context", () => {
   });
 
   it("in an untrusted project, leaves out the repo config's commands and tells the user, still adding the rest", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
+    const env = hermeticGitEnvironment({ now });
     const command = [process.execPath, "-e", "console.log('Open pull requests: 3')"];
     writeRepoConfig(env, { hooks: { "session-context": { commands: [command] } } });
 
@@ -136,9 +135,9 @@ describe("session-context", () => {
   });
 
   it("keeps long extras within the budget, after the git summary, even in a busy repo", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
-    initRepo(env.cwd);
-    for (let i = 1; i <= 5; i++) commit(env.cwd, `Commit number ${i} `.repeat(10));
+    const env = hermeticGitEnvironment({ now });
+    const repo = initGitRepo(env, env.cwd, { initialCommit: false });
+    for (let i = 1; i <= 5; i++) repo.commit(`Commit number ${i} `.repeat(10));
     for (let i = 0; i < 300; i++) writeProjectFile(env.cwd, `a-rather-long-file-name-number-${i}.txt`);
     writeProjectFile(env.cwd, "NOTES.md", "Release notes. ".repeat(500));
     const longOutput = [process.execPath, "-e", "console.log('x'.repeat(5000))"];
@@ -240,7 +239,7 @@ describe("session-context", () => {
   });
 
   it("names an extra file it cannot read instead of failing", async () => {
-    const env = fakeEnvironment({ now, processRunner: "real" });
+    const env = hermeticGitEnvironment({ now });
     writeRepoConfig(env, { hooks: { "session-context": { files: ["missing.md"] } } });
 
     const { context } = expectContext(await runEvent(claudeCode.sessionStart("startup"), { env }), /2026-03-14/);

@@ -35,7 +35,8 @@ This is the rule that matters most. Drive the dispatcher with `runEvent` from `t
 The helpers are:
 
 - `claudeCode.*` payload builders for each Event;
-- `fakeEnvironment()`, with temp dirs, a fixed clock and a recording process runner, or real git with `processRunner: "real"`;
+- `fakeEnvironment()`, with temp dirs, a fixed clock and a recording process runner, or real processes with `processRunner: "real"`;
+- `hermeticGitEnvironment()` and `initGitRepo()` for real git in a temp repo, isolated from your own git config;
 - `writeRepoConfig` and `writeUserConfig`;
 - `loadFixtures` and `expectFixture`.
 

@@ -17,7 +17,7 @@ import {
   fakeBundlePath,
   fakeEnvironment,
   hermeticGitEnvironment,
-  initRealGitRepo,
+  initGitRepo,
   runInit,
   runTrust,
   userSettingsPath,
@@ -201,7 +201,7 @@ describe("hardhooks test", () => {
 
     it("lets user cases see the real git repository", async () => {
       const env = hermeticGitEnvironment();
-      const repo = initRealGitRepo(env);
+      const repo = initGitRepo(env);
       writeRepoConfig(env, { preset: "strict" });
       writeCases(env, "branches.json", [{ name: "no commits on main", bash: "git commit -m wip", expect: { decision: "block", reason: "`main`" } }]);
       expect((await runTestCommand({ env })).stdout).toMatch(/PASS\s+branches\.json\s+no commits on main/);

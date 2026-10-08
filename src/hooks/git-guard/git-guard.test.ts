@@ -8,7 +8,7 @@ import {
   expectFixture,
   expectNoDecision,
   hermeticGitEnvironment,
-  initRealGitRepo,
+  initGitRepo,
   loadFixtures,
   runEvent,
 } from "../../../test/helpers";
@@ -317,7 +317,7 @@ describe("git-guard", () => {
     /** Run `command` in a real repo (the project dir) currently on `branch`. */
     async function inRepo(command: string, config: ResolvedConfig, options: { branch?: string; originHead?: string } = {}) {
       const env = hermeticGitEnvironment();
-      initRealGitRepo(env, env.cwd, options);
+      initGitRepo(env, env.cwd, options);
       return runEvent(claudeCode.bash(command), { env, config });
     }
 
@@ -390,8 +390,8 @@ describe("git-guard", () => {
 
     it("checks the repo the command actually runs in", async () => {
       const env = hermeticGitEnvironment();
-      initRealGitRepo(env, env.cwd, { branch: "feature" });
-      initRealGitRepo(env, join(env.cwd, "vendor", "lib"), { branch: "main" });
+      initGitRepo(env, env.cwd, { branch: "feature" });
+      initGitRepo(env, join(env.cwd, "vendor", "lib"), { branch: "main" });
       const run = (command: string) => runEvent(claudeCode.bash(command), { env, config: strict });
       expectBlocked(await run("cd vendor/lib && git commit -m wip"), /`main`/);
       expectBlocked(await run("git -C vendor/lib commit -m wip"), /`main`/);

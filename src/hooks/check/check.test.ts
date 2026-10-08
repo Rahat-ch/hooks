@@ -1,6 +1,5 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   claudeCode,
@@ -9,6 +8,8 @@ import {
   expectMessage,
   expectNoDecision,
   fakeEnvironment,
+  hermeticGitEnvironment,
+  initGitRepo,
   observe,
   runEvent as dispatchEvent,
   writeRepoConfig,
@@ -28,7 +29,7 @@ const node = (script: string) => `node -e "${script}"`;
  */
 const runEvent: typeof dispatchEvent = (payload, options = {}) => dispatchEvent(payload, { trusted: true, ...options });
 
-/** A temp project with real processes and enough of the real environment (PATH) to find node, git and the shell. */
+/** A temp project with real processes, hermetic git and enough of the real environment (PATH) to find node, git and the shell. */
 function realEnvironment(): FakeEnvironment {
   const passthrough = [
     ...["PATH", "Path", "PATHEXT", "SystemRoot", "ComSpec", "WINDIR", "TEMP", "TMP"],
@@ -36,7 +37,7 @@ function realEnvironment(): FakeEnvironment {
     ...["APPDATA", "LOCALAPPDATA", "USERPROFILE"],
   ];
   const env = Object.fromEntries(passthrough.flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])));
-  return fakeEnvironment({ processRunner: "real", env });
+  return hermeticGitEnvironment({ env });
 }
 
 function enableCheck(env: FakeEnvironment, options: Record<string, unknown> = {}) {
@@ -150,7 +151,7 @@ describe("check", () => {
 
     it("skips the run when the working tree is unchanged since the last pass", async () => {
       const env = realEnvironment();
-      gitRepo(env.cwd, { "src/a.ts": "export const a = 1;\n" });
+      gitRepo(env, { "src/a.ts": "export const a = 1;\n" });
       const counter = countingCommand(env);
       enableCheck(env, { command: counter.command });
 
@@ -165,7 +166,7 @@ describe("check", () => {
       { change: "a deleted file", edit: (cwd: string) => rmSync(join(cwd, "src/a.ts")) },
     ])("runs again after $change", async ({ edit }) => {
       const env = realEnvironment();
-      gitRepo(env.cwd, { "src/a.ts": "export const a = 1;\n" });
+      gitRepo(env, { "src/a.ts": "export const a = 1;\n" });
       const counter = countingCommand(env);
       enableCheck(env, { command: counter.command });
 
@@ -177,7 +178,7 @@ describe("check", () => {
 
     it("runs again after an uncommitted file changes a second time", async () => {
       const env = realEnvironment();
-      gitRepo(env.cwd, { "src/a.ts": "export const a = 1;\n" });
+      gitRepo(env, { "src/a.ts": "export const a = 1;\n" });
       const counter = countingCommand(env);
       enableCheck(env, { command: counter.command });
 
@@ -190,7 +191,7 @@ describe("check", () => {
 
     it("ignores changes to gitignored files", async () => {
       const env = realEnvironment();
-      gitRepo(env.cwd, { ".gitignore": "dist/\n", "src/a.ts": "export const a = 1;\n" });
+      gitRepo(env, { ".gitignore": "dist/\n", "src/a.ts": "export const a = 1;\n" });
       const counter = countingCommand(env);
       enableCheck(env, { command: counter.command });
 
@@ -347,20 +348,9 @@ describe("check", () => {
   });
 });
 
-/** Make `dir` a git repo with `files` committed. */
-function gitRepo(dir: string, files: Record<string, string>) {
-  for (const [name, content] of Object.entries(files)) {
-    mkdirSync(dirname(join(dir, name)), { recursive: true });
-    writeFileSync(join(dir, name), content);
-  }
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], {
-      cwd: dir,
-      stdio: "ignore",
-    });
-  git("init", "-q");
-  git("add", "-A");
-  git("commit", "-q", "-m", "initial");
+/** Make the project a git repo with `files` committed. */
+function gitRepo(env: FakeEnvironment, files: Record<string, string>) {
+  initGitRepo(env, env.cwd, { initialCommit: false }).commit("initial", files);
 }
 
 function scripts(scripts: Record<string, string>): string {

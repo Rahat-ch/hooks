@@ -7,7 +7,7 @@ import {
   fakeBundlePath,
   fakeEnvironment,
   hermeticGitEnvironment,
-  initRealGitRepo,
+  initGitRepo,
   localSettingsPath,
   projectBundlePath,
   projectSettingsPath,
@@ -118,7 +118,7 @@ describe("hardhooks init", () => {
 
     it("warns when git would commit .claude/settings.local.json", async () => {
       const env = hermeticGitEnvironment();
-      const repo = initRealGitRepo(env);
+      const repo = initGitRepo(env);
 
       const exposed = await runInit({ env, mode: "yes", hooks: [shellGuard] });
       expect(exposed.stdout).toMatch(/git doesn't ignore .*settings\.local\.json/);
