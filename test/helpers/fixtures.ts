@@ -1,42 +1,35 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import type { HostResult } from "../../src/dispatcher";
-import { observe, type ObservedDecision } from "./decisions";
+import { parseCaseFile, type TestCase } from "../../src/testing/cases";
+import { readFixtureDir } from "../../src/testing/fixture-files";
+import { judge } from "../../src/testing/observe";
 
 /**
  * A fixture: a Host payload for one Event plus the Decision the Host should
- * see. Provisional format: #13 (`hardhooks test`) owns it and may extend it.
+ * see. The format lives in `src/testing/cases.ts`, shared with `hardhooks test`.
  */
-export interface FixtureCase {
+export interface FixtureCase extends TestCase {
   /** File name, for test titles. */
   file: string;
+  /** Same as `name`, for test titles. */
   description: string;
-  event: string;
-  payload: Record<string, unknown>;
-  expect: {
-    decision: ObservedDecision["decision"];
-    /** Regular expression (case-insensitive) the reason must match. */
-    reason?: string;
-    /** Regular expression (case-insensitive) the added context must match. */
-    context?: string;
-  };
 }
 
 /** Load every `*.json` fixture in a directory, e.g. `loadFixtures(new URL("./fixtures", import.meta.url))`. */
 export function loadFixtures(dir: URL): FixtureCase[] {
   const path = fileURLToPath(dir);
-  return readdirSync(path)
-    .filter((name) => name.endsWith(".json"))
-    .sort()
-    .map((file) => ({ file, ...(JSON.parse(readFileSync(join(path, file), "utf8")) as Omit<FixtureCase, "file">) }));
+  const hook = basename(dirname(path));
+  return readFixtureDir(hook, path).flatMap(({ file, text }) => {
+    const parsed = parseCaseFile(text, `${hook}/fixtures/${file}`, { kind: "fixture", cwd: "/home/user/demo" });
+    if (!parsed.ok) throw new Error(`invalid fixture:\n${parsed.errors.join("\n")}`);
+    return parsed.cases.map((testCase) => ({ ...testCase, file, description: testCase.name }));
+  });
 }
 
-export function expectFixture(result: HostResult, fixture: FixtureCase): void {
-  expect(result.exitCode, result.stderr).toBe(0);
-  const observed = observe(result);
-  expect(observed.decision, result.stdout).toBe(fixture.expect.decision);
-  if (fixture.expect.reason !== undefined) expect(observed.reason).toMatch(new RegExp(fixture.expect.reason, "i"));
-  if (fixture.expect.context !== undefined) expect(observed.context).toMatch(new RegExp(fixture.expect.context, "i"));
+/** Judge a dispatcher result exactly as `hardhooks test` does. */
+export function expectFixture(result: HostResult, fixture: TestCase): void {
+  const verdict = judge(result, fixture.expect);
+  expect(verdict.problems, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toEqual([]);
 }
