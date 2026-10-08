@@ -2,12 +2,14 @@
  * git-guard (Guard, fails closed): stops git commands that rewrite shared
  * history, destroy uncommitted work or skip the user's git hooks.
  *
- * - Blocks force-push (`--force`, `-f`, `+refspec`), `reset --hard`,
+ * - Blocks force-push (`--force`, `-f`, `+refspec`), `push --mirror`
+ *   (which force-overwrites and deletes remote refs), `reset --hard`,
  *   `clean -f` and `--no-verify` on commit/push.
- * - Asks before `--force-with-lease`, discard-all `checkout`/`restore` and
+ * - Asks before `--force-with-lease`, pushes that delete remote refs
+ *   (`:branch`, `--delete`, `--prune`), discard-all `checkout`/`restore` and
  *   `branch -D`.
  * - When protection is on (`strict`, or `protectedBranches` configured),
- *   blocks commits and pushes to protected branches.
+ *   blocks commits and pushes to protected branches, and deleting them.
  * - Blocks input it can't analyse (ADR-0004).
  */
 import { resolve } from "node:path";
@@ -104,10 +106,27 @@ const reasons = {
   discardAll:
     "This discards all uncommitted changes in the working tree, which can't be recovered. " +
     "Confirm the changes should be thrown away (or `git stash` them instead).",
+  mirror:
+    "`git push --mirror` makes the remote an exact copy of this repository: it force-overwrites every remote ref " +
+    "and deletes every remote branch and tag that doesn't exist locally. Push branches by name instead, " +
+    "or ask the user to mirror the repository themselves.",
+  remoteDelete:
+    "This push deletes refs on the remote (a `:branch` refspec, `--delete` or `--prune`), and with them " +
+    "any commits only they hold. Confirm the remote branches or tags should be deleted.",
   branchDelete:
     "`git branch -D` deletes the branch even if it isn't merged, which can lose its commits. " +
     "Confirm the branch should be deleted (or use `git branch -d`).",
 };
+
+/**
+ * Whether a push deletes remote refs: `--delete`/`-d`, `--prune`, or a
+ * refspec with an empty source (`:branch`, `+:branch`). A lone `:` is git's
+ * "push matching branches", not a delete.
+ */
+function deletesRemoteRefs(parsed: ParsedArgs): boolean {
+  if (has(parsed, "-d", "--delete") || has(parsed, undefined, "--prune")) return true;
+  return parsed.operands.slice(1).some((refspec) => /^\+?:./.test(refspec));
+}
 
 /** Pathspecs that cover the whole working tree. */
 const everything = new Set([".", "./", "./*", "*", ":/", ":/.", ":/*", ":(top)", ":(top).", ":(top)*"]);
@@ -126,6 +145,8 @@ const rules: Record<string, (args: readonly string[]) => Finding[]> = {
     if (parsed.operands.some((operand) => operand.startsWith("+"))) {
       findings.push({ decision: "block", reason: reasons.plusRefspec });
     }
+    if (has(parsed, undefined, "--mirror")) findings.push({ decision: "block", reason: reasons.mirror });
+    if (deletesRemoteRefs(parsed)) findings.push({ decision: "ask", reason: reasons.remoteDelete });
     if (has(parsed, undefined, "--no-verify")) findings.push({ decision: "block", reason: reasons.noVerify });
     return findings;
   },

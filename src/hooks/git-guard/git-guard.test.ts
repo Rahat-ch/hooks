@@ -212,6 +212,35 @@ describe("git-guard", () => {
     expectAsked(await runEvent(claudeCode.bash(command)), reason);
   });
 
+  it.each(["git push --mirror", "git push --mirror origin", "git push --mirr backup", 'bash -c "git push --mirror $R"'])(
+    "blocks `%s`, which overwrites and deletes every remote ref",
+    async (command) => {
+      expectBlocked(await runEvent(claudeCode.bash(command)), /--mirror/);
+    },
+  );
+
+  it.each([
+    "git push origin :feature",
+    "git push origin :refs/heads/feature",
+    "git push origin :v1.0",
+    "git push origin feature :old-feature",
+    "git push --delete origin feature",
+    "git push origin --delete feature other",
+    "git push -d origin feature",
+    "git push origin --del feature",
+    "git push --prune origin 'refs/heads/*:refs/heads/*'",
+    "sudo git push origin :feature",
+  ])("asks before `%s`, which deletes remote refs", async (command) => {
+    expectAsked(await runEvent(claudeCode.bash(command)), /delete/i);
+  });
+
+  it.each(["git push origin :", "git push origin feature:feature", "git push origin HEAD:feature"])(
+    "allows `%s`, which deletes nothing",
+    async (command) => {
+      expectNoDecision(await runEvent(claudeCode.bash(command)));
+    },
+  );
+
   it("blocks rather than asks when a command line both force-pushes and asks", async () => {
     expectBlocked(await runEvent(claudeCode.bash("git branch -D tmp && git push --force")), /force/);
     expectBlocked(await runEvent(claudeCode.bash("git push --force-with-lease --force")), /force/);
@@ -328,7 +357,18 @@ describe("git-guard", () => {
       expectBlocked(await inRepo(command, strict, { branch: "feature" }), /protected branch/);
     });
 
-    it.each(["git switch -c fix && git commit -m wip", "git checkout -b fix && git commit -m wip && git push -u origin fix"])(
+    it.each(["git push origin --delete main", "git push origin :main", "git push -d origin refs/heads/master"])(
+      "under strict, blocks deleting a protected branch: `%s`",
+      async (command) => {
+        expectBlocked(await inRepo(command, strict, { branch: "feature" }), /Deleting protected branch `(main|master)`/);
+      },
+    );
+
+    it("under strict, still only asks before deleting an unprotected remote branch", async () => {
+      expectAsked(await inRepo("git push origin --delete old-feature", strict, { branch: "feature" }), /delete/i);
+    });
+
+    it.each(["git switch -c fix && git commit -m wip","git checkout -b fix && git commit -m wip && git push -u origin fix"])(
       "under strict, allows `%s` on main, because the commit lands on the new branch",
       async (command) => {
         expectNoDecision(await inRepo(command, strict, { branch: "main" }));

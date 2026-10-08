@@ -119,11 +119,12 @@ Stops git commands that rewrite shared history, destroy uncommitted work or skip
 - **Fail mode:** closed.
 - **Blocks:**
   - `push --force`, `-f` and `+refspec` pushes;
+  - `push --mirror`, which force-overwrites every remote ref and deletes the ones you don't have locally;
   - `reset --hard`;
   - `clean -f` in any flag combination;
   - `--no-verify` on commit or push, and `-c core.hooksPath=…`, which skips the hooks the same way.
-- **Asks:** before `push --force-with-lease`, a checkout or restore that discards all changes (`git checkout -- .`, `git restore .`), and `branch -D`.
-- **Protected branches:** blocks commits and pushes that target a protected branch. Protection is on under `strict`, or whenever you configure it.
+- **Asks:** before `push --force-with-lease`, pushes that delete remote branches or tags (`git push origin :old`, `--delete`/`-d`, `--prune`), a checkout or restore that discards all changes (`git checkout -- .`, `git restore .`), and `branch -D`.
+- **Protected branches:** blocks commits and pushes that target a protected branch, and deleting it on the remote. Protection is on under `strict`, or whenever you configure it.
 
 | Option | Type | `standard` | `strict` | |
 | --- | --- | --- | --- | --- |

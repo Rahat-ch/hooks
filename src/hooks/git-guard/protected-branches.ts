@@ -79,14 +79,23 @@ function destination(refspec: string): string {
   return dst === "@" ? "HEAD" : dst.replace(/^refs\/heads\//, "");
 }
 
-/** Branches a push writes to: "HEAD" means the current branch, "*" means every branch. */
-function pushTargets(args: readonly string[]): string[] {
+interface PushTarget {
+  /** "HEAD" means the current branch, "*" means every branch. */
+  readonly branch: string;
+  /** The push deletes the branch on the remote (`:branch`, `--delete`). */
+  readonly deletes: boolean;
+}
+
+/** Branches a push writes to or deletes. */
+function pushTargets(args: readonly string[]): PushTarget[] {
   const parsed = parseOptions(args, { withValue: pushOptionsWithValue });
   const names = parsed.options.map((o) => o.name);
-  if (names.some((n) => n === "--all" || n === "--branches" || n === "--mirror")) return ["*"];
+  if (names.some((n) => n === "--all" || n === "--branches" || n === "--mirror")) return [{ branch: "*", deletes: false }];
   const refspecs = parsed.operands.slice(1);
-  if (refspecs.length === 0) return names.includes("--tags") ? [] : ["HEAD"];
-  return refspecs.map(destination);
+  const deleting = names.some((n) => n === "-d" || (n.length >= 4 && "--delete".startsWith(n)));
+  if (deleting) return refspecs.map((name) => ({ branch: destination(name), deletes: true }));
+  if (refspecs.length === 0) return names.includes("--tags") ? [] : [{ branch: "HEAD", deletes: false }];
+  return refspecs.map((refspec) => ({ branch: destination(refspec), deletes: /^\+?:./.test(refspec) }));
 }
 
 /**
@@ -129,15 +138,17 @@ export async function protectedBranchViolations(
     }
     if (subcommand === "push") {
       for (const target of pushTargets(args)) {
-        if (target === "*") {
+        if (target.branch === "*") {
           violations.push("`git push --all`/`--mirror` would push to every protected branch too. Push branches by name.");
           continue;
         }
-        const branch = target === "HEAD" ? await branchAt(cwd) : target;
+        const branch = target.branch === "HEAD" ? await branchAt(cwd) : target.branch;
         if (branch !== undefined && (await isProtected(branch, cwd))) {
           violations.push(
-            `Pushing to protected branch \`${branch}\` is blocked. ` +
-              "Push a feature branch and open a pull request instead.",
+            target.deletes
+              ? `Deleting protected branch \`${branch}\` on the remote is blocked. Ask the user to delete it themselves.`
+              : `Pushing to protected branch \`${branch}\` is blocked. ` +
+                  "Push a feature branch and open a pull request instead.",
           );
         }
       }
