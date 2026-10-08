@@ -11,6 +11,12 @@
  *   anything in a project without git, or `.git`), and before deletes whose
  *   targets are only known at run time.
  * - Allows deleting gitignored output inside the project (`node_modules`).
+ * - With `askDynamicCommands` (on under `strict`), asks before a command
+ *   whose program or script is itself only known at run time
+ *   (`bash -c "$CMD"`, `eval "$(…)"`, `$CMD args`; see `./dynamic.ts`).
+ *   This Guard owns "what will this command line execute": it already
+ *   blocks downloads run as code, and an unseen command is the same risk
+ *   with the source hidden.
  * - Only commands that execute count: a commit message, an `echo` string or a
  *   heredoc written to a file never triggers it.
  * - Blocks input it can't analyse (ADR-0004).
@@ -23,10 +29,12 @@ import { defineHook } from "../hook";
 import { deleteFindings, type Finding } from "./deletes";
 import { deviceFindings } from "./devices";
 import { downloadFindings } from "./downloads";
+import { dynamicFindings } from "./dynamic";
 import { Repo } from "./repo";
 
 export interface BlockDestructiveShellOptions {
   allowedPaths: string[];
+  askDynamicCommands: boolean;
 }
 
 /**
@@ -66,10 +74,18 @@ export const blockDestructiveShell = defineHook<BlockDestructiveShellOptions>({
         "`~`, `$VAR` and `${VAR}` are expanded; an entry whose variable is unset is skipped. " +
         "A directory containing the project or the home directory is ignored.",
     }),
+    askDynamicCommands: s.boolean({
+      description:
+        "Ask before a command whose program or script is only known at run time, so no Guard can see it: " +
+        '`$CMD args`, `bash -c "$CMD"`, `eval "$(…)"`, text piped into `sh`. `$EDITOR`, `$VISUAL` and `$PAGER` are exempt.',
+    }),
   }),
   defaults: {
-    standard: { enabled: true, options: { allowedPaths: ["/tmp", "/var/tmp", "$TMPDIR", "$TEMP"] } },
-    strict: { enabled: true, options: { allowedPaths: [] } },
+    standard: {
+      enabled: true,
+      options: { allowedPaths: ["/tmp", "/var/tmp", "$TMPDIR", "$TEMP"], askDynamicCommands: false },
+    },
+    strict: { enabled: true, options: { allowedPaths: [], askDynamicCommands: true } },
   },
   async run(event, options, env) {
     const command = event.tool?.command;
@@ -92,6 +108,7 @@ export const blockDestructiveShell = defineHook<BlockDestructiveShellOptions>({
         vars: env.env,
         source: command,
       })),
+      ...(options.askDynamicCommands ? dynamicFindings(analysis.commands, command) : []),
     ];
     return decide(findings);
   },

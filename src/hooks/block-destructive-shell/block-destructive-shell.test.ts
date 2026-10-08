@@ -222,6 +222,90 @@ describe("block-destructive-shell", () => {
     });
   });
 
+  describe("commands that are themselves only known at run time", () => {
+    /** Strict, in a real (empty) environment so git-guard sees no repo and stays out of it. */
+    const strict = () => ({ env: hermeticGitEnvironment(), config: { preset: "strict" as const, hooks: {} } });
+    const dynamic = [
+      'bash -c "$CMD"',
+      "sh -c $CMD",
+      'eval "$CMD"',
+      "eval $CMD",
+      "$CMD args",
+      '"$CMD" --flag',
+      "${CMD} args",
+      'sh -c "$(echo cm0gLXJmIH4= | base64 -d)"',
+      'eval "$(cat setup.txt)"',
+      'eval "$(pyenv init -)"',
+      'bash -c "echo start; $NEXT"',
+      'env FOO=1 bash -c "$CMD"',
+      'sudo sh -c "$CMD"',
+      "base64 -d payload.txt | sh",
+      "cat commands.txt | bash",
+      "cat commands.txt | xargs -I{} sh -c {}",
+      "cat commands.txt | xargs sh -c",
+      "find . -name '*.sh' -exec {} \\;",
+      'run() { "$@"; }; run make',
+      "exec \"$@\"",
+      '$SHELL -c "make"',
+      'EDITOR=$(cat x); $EDITOR file',
+      'export PAGER="$(cat x)"; $PAGER notes.md',
+    ];
+
+    it.each(dynamic)("under strict, asks before `%s`", async (command) => {
+      expectAsked(await runEvent(claudeCode.bash(command), strict()), /only known at run time/);
+    });
+
+    it.each(dynamic)("under standard, allows `%s`", async (command) => {
+      expectNoDecision(await runEvent(claudeCode.bash(command)));
+    });
+
+    it("under standard, asks when the option is turned on", async () => {
+      const config = {
+        preset: "standard" as const,
+        hooks: { "block-destructive-shell": { options: { askDynamicCommands: true } } },
+      };
+      expectAsked(await runEvent(claudeCode.bash('eval "$CMD"'), { config }), /only known at run time/);
+    });
+
+    it("under strict, allows them when the option is turned off", async () => {
+      const config = {
+        preset: "strict" as const,
+        hooks: { "block-destructive-shell": { options: { askDynamicCommands: false } } },
+      };
+      expectNoDecision(await runEvent(claudeCode.bash('eval "$CMD"'), { config }));
+    });
+
+    it.each([
+      "make test",
+      "npm run build && ./scripts/deploy.sh",
+      'bash -c "npm test"',
+      "bash scripts/setup.sh",
+      'bash -c "git push origin $BRANCH"',
+      'bash -c "cd $DIR && make"',
+      'eval "echo $X"',
+      "echo ls | sh",
+      "sh <<EOF\nls\nEOF",
+      'rm -f "$TMPFILE"',
+      'echo "$CMD"',
+      'git commit -m "run $CMD later"',
+      "CMD=make; $CMD test",
+      "$HOME/bin/tool --version",
+      '"$(which python3)" script.py',
+      "$(command -v node) build.js",
+      "$EDITOR notes.md",
+      '"$VISUAL" notes.md',
+      "${PAGER:-less} README.md",
+      "find . -name '*.log' -exec rm {} +",
+      "ls | xargs -I{} echo {}",
+    ])("under strict, still allows `%s`", async (command) => {
+      expectNoDecision(await runEvent(claudeCode.bash(command), strict()));
+    });
+
+    it("still blocks a resolved `$(which rm)` the same as `rm`", async () => {
+      expectBlocked(await runEvent(claudeCode.bash("$(which rm) -rf ~")), /home/);
+    });
+  });
+
   describe("allowedPaths", () => {
     it("allows deleting inside the temp directory under standard", async () => {
       const env = hermeticGitEnvironment({ env: { TMPDIR: "/srv/hardhooks-tmp" } });

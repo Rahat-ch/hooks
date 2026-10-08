@@ -71,6 +71,15 @@ export interface SimpleCommand {
    * append. Such entries hold their source text.
    */
   readonly dynamic: boolean;
+  /**
+   * The program itself is only known at run time, so nothing about what
+   * this command does can be seen: `$CMD args`, `"$@"`, a `{}` that
+   * `find -exec`/`xargs -I` fills in, and so the script of `bash -c "$CMD"`
+   * or `eval "$(…)"`. Also set on a shell that runs a script it is only given
+   * at run time: unknown text piped into it (`base64 -d x | sh`), or
+   * arguments `xargs` appends to `sh -c`. `program` then holds the source text.
+   */
+  readonly dynamicProgram: boolean;
   /** Wrapper programs that launched this command, outermost first, e.g. `["sudo", "bash"]` for `sudo bash -c "..."`. */
   readonly via: readonly string[];
   /** The commands of the previous pipeline stage when this command reads its stdin from a pipe, e.g. `curl` in `curl x | sh`. */

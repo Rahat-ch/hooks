@@ -55,6 +55,10 @@
               "items": {
                 "type": "string"
               }
+            },
+            "askDynamicCommands": {
+              "description": "Ask before a command whose program or script is only known at run time, so no Guard can see it: `$CMD args`, `bash -c \"$CMD\"`, `eval \"$(…)\"`, text piped into `sh`. `$EDITOR`, `$VISUAL` and `$PAGER` are exempt.",
+              "type": "boolean"
             }
           },
           "additionalProperties": false
