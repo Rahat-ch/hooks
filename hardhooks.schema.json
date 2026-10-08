@@ -20,6 +20,17 @@
       "description": "Per-Hook overrides: `enabled` plus that Hook's options. Anything left out comes from the Preset.",
       "type": "object",
       "properties": {
+        "format-on-edit": {
+          "description": "Formats each file the Host edits or writes with the project's own formatter.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
         "git-guard": {
           "description": "Blocks git commands that rewrite shared history or destroy uncommitted work.",
           "type": "object",

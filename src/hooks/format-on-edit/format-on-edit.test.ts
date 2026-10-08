@@ -1,0 +1,193 @@
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import type { ProcessResult } from "../../environment";
+import {
+  claudeCode,
+  expectNoDecision,
+  fakeEnvironment,
+  recordingProcessRunner,
+  runEvent,
+  type FakeEnvironmentOptions,
+} from "../../../test/helpers";
+
+const repoPrettier = fileURLToPath(new URL("../../../node_modules/prettier", import.meta.url));
+
+/** A temp project (a git repo root, so detection never looks above it) with these files. */
+function project(files: Record<string, string>, options: FakeEnvironmentOptions = {}) {
+  const env = fakeEnvironment(options);
+  mkdirSync(join(env.cwd, ".git"));
+  for (const [path, content] of Object.entries(files)) write(join(env.cwd, path), content);
+  return env;
+}
+
+function write(path: string, content: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content);
+}
+
+/** Install this repo's prettier into a project as its own `node_modules/prettier` (a junction on Windows). */
+function linkPrettier(projectDir: string): void {
+  mkdirSync(join(projectDir, "node_modules"), { recursive: true });
+  symlinkSync(repoPrettier, join(projectDir, "node_modules", "prettier"), "junction");
+}
+
+const read = (path: string) => readFileSync(path, "utf8");
+
+/**
+ * Stands in for formatters CI may not have (ruff, gofmt, ...): a recording
+ * process runner that, when `program` runs, rewrites the file named by its
+ * last argument to `formatted`, as the real formatter would. With a failing
+ * `result` it leaves the file alone.
+ */
+function fakeFormatter(program: string, formatted: string, result: Partial<ProcessResult> = {}) {
+  const succeeds = (result.exitCode ?? 0) === 0 && !result.timedOut && !result.spawnError;
+  return recordingProcessRunner((command, args, options) => {
+    if (succeeds && basename(command).replace(/\.exe$/, "") === program) {
+      writeFileSync(resolve(options.cwd ?? ".", args.at(-1)!), formatted);
+    }
+    return result;
+  });
+}
+
+const writePayload = (file: string) => claudeCode.postToolUse("Write", { file_path: file, content: "..." });
+
+describe("format-on-edit", () => {
+  describe("with a real prettier", () => {
+    it("formats the file the Host wrote, silently, and leaves every other file alone", { timeout: 30_000 }, async () => {
+      const env = project(
+        {
+          ".prettierrc": JSON.stringify({ semi: false }),
+          "src/edited.ts": "const  x = {a:1,b:2};\n",
+          "src/untouched.ts": "const  y = {c:3};\n",
+        },
+        { processRunner: "real" },
+      );
+      linkPrettier(env.cwd);
+      const file = join(env.cwd, "src", "edited.ts");
+
+      const result = await runEvent(claudeCode.postToolUse("Write", { file_path: file, content: "..." }), { env });
+
+      expectNoDecision(result);
+      expect(result.stderr).toBe("");
+      expect(read(file)).toBe("const x = { a: 1, b: 2 }\n");
+      expect(read(join(env.cwd, "src", "untouched.ts"))).toBe("const  y = {c:3};\n");
+    });
+  });
+
+  it("formats a .py file in a ruff-configured project with `ruff format`", async () => {
+    const runner = fakeFormatter("ruff", "x = 1\n");
+    const env = project({ "pyproject.toml": "[project]\nname = 'demo'\n\n[tool.ruff]\nline-length = 100\n", "app.py": "x=1\n" }, { processRunner: runner });
+    const file = join(env.cwd, "app.py");
+
+    const result = await runEvent(writePayload(file), { env });
+
+    expectNoDecision(result);
+    expect(read(file)).toBe("x = 1\n");
+    expect(runner.runs).toHaveLength(1);
+    expect(runner.runs[0]!.args).toContain("format");
+  });
+
+  describe("stays silent and leaves the file alone", () => {
+    it("when the project configures no formatter", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ "a.ts": "const  a=1\n", "b.py": "b=1\n" }, { processRunner: runner });
+
+      for (const name of ["a.ts", "b.py"]) {
+        const result = await runEvent(writePayload(join(env.cwd, name)), { env });
+        expectNoDecision(result);
+        expect(result.stderr).toBe("");
+      }
+      expect(runner.runs).toEqual([]);
+    });
+
+    it("when no configured formatter handles the file type", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ ".prettierrc": "{}", "ruff.toml": "", "notes.txt": "x\n" }, { processRunner: runner });
+
+      expectNoDecision(await runEvent(writePayload(join(env.cwd, "notes.txt")), { env }));
+      expect(runner.runs).toEqual([]);
+    });
+
+    it("when the edited file no longer exists", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ ".prettierrc": "{}" }, { processRunner: runner });
+
+      expectNoDecision(await runEvent(writePayload(join(env.cwd, "gone.ts")), { env }));
+      expect(runner.runs).toEqual([]);
+    });
+
+    it.each([
+      { failure: "the formatter fails", result: { exitCode: 2, stderr: "error: cannot parse app.py" } },
+      { failure: "the formatter times out", result: { exitCode: null, timedOut: true } },
+      { failure: "the formatter is not installed", result: { exitCode: null, spawnError: "spawn ruff ENOENT" } },
+    ])("when $failure", async ({ result: failure }) => {
+      const runner = fakeFormatter("ruff", "", failure);
+      const env = project({ "ruff.toml": "", "app.py": "x=(\n" }, { processRunner: runner });
+      const file = join(env.cwd, "app.py");
+
+      const result = await runEvent(writePayload(file), { env });
+
+      expectNoDecision(result);
+      expect(result.stderr).toBe("");
+      expect(runner.runs).toHaveLength(1);
+      expect(read(file)).toBe("x=(\n");
+    });
+  });
+
+  describe("prefers project-local binaries", () => {
+    const ruffProject = { "ruff.toml": "", "pkg/app.py": "x=1\n" };
+
+    it.each([
+      { platform: "linux" as const, venv: ".venv", bin: join("bin", "ruff") },
+      { platform: "darwin" as const, venv: "venv", bin: join("bin", "ruff") },
+      { platform: "win32" as const, venv: ".venv", bin: join("Scripts", "ruff.exe") },
+    ])("uses ruff from the project's $venv on $platform", async ({ platform, venv, bin }) => {
+      const runner = fakeFormatter("ruff", "x = 1\n");
+      const env = project({ ...ruffProject, [join(venv, bin)]: "" }, { processRunner: runner, platform });
+      const file = join(env.cwd, "pkg", "app.py");
+
+      expectNoDecision(await runEvent(writePayload(file), { env }));
+
+      expect(runner.runs.map((r) => r.command)).toEqual([join(env.cwd, venv, bin)]);
+      expect(read(file)).toBe("x = 1\n");
+    });
+
+    it("falls back to ruff on PATH without a project virtualenv", async () => {
+      const runner = fakeFormatter("ruff", "x = 1\n");
+      const env = project(ruffProject, { processRunner: runner });
+
+      await runEvent(writePayload(join(env.cwd, "pkg", "app.py")), { env });
+
+      expect(runner.runs.map((r) => r.command)).toEqual(["ruff"]);
+    });
+
+    it("runs prettier from the nearest node_modules with node, not through a .bin shim", async () => {
+      const runner = recordingProcessRunner();
+      const env = project(
+        {
+          "package.json": JSON.stringify({ prettier: { semi: false } }),
+          "node_modules/prettier/package.json": JSON.stringify({ name: "prettier", bin: "./bin/prettier.cjs" }),
+          "web/a.ts": "a\n",
+        },
+        { processRunner: runner },
+      );
+
+      await runEvent(writePayload(join(env.cwd, "web", "a.ts")), { env });
+
+      expect(runner.runs).toHaveLength(1);
+      expect(runner.runs[0]!.command).toBe("node");
+      expect(runner.runs[0]!.args[0]).toBe(join(env.cwd, "node_modules", "prettier", "bin", "prettier.cjs"));
+    });
+
+    it("falls back to prettier on PATH when the project has none installed", async () => {
+      const runner = recordingProcessRunner();
+      const env = project({ ".prettierrc": "{}", "a.ts": "a\n" }, { processRunner: runner });
+
+      await runEvent(writePayload(join(env.cwd, "a.ts")), { env });
+
+      expect(runner.runs.map((r) => r.command)).toEqual(["prettier"]);
+    });
+  });
+});
