@@ -1,0 +1,4 @@
+{
+  "$schema": "https://unpkg.com/hardhooks/hardhooks.schema.json",
+  "preset": "standard"
+}

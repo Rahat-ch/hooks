@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/hardhooks/hardhooks.schema.json",
+  "title": "hardhooks config",
+  "description": "hardhooks configuration (.hardhooks.json or the user-level config.json).",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "JSON Schema for editor autocomplete.",
+      "type": "string"
+    },
+    "preset": {
+      "description": "`standard` (default): Guards, format-on-edit and session-context on. `strict`: every Hook on, Guards tightened.",
+      "enum": [
+        "standard",
+        "strict"
+      ]
+    },
+    "hooks": {
+      "description": "Per-Hook overrides: `enabled` plus that Hook's options. Anything left out comes from the Preset.",
+      "type": "object",
+      "properties": {
+        "git-guard": {
+          "description": "Blocks git commands that rewrite shared history or destroy uncommitted work.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Run this Hook. The default comes from the Preset.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

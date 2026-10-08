@@ -8,7 +8,9 @@
     "hardhooks": "dist/hardhooks.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "examples",
+    "hardhooks.schema.json"
   ],
   "engines": {
     "node": ">=20"
@@ -18,6 +20,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --project unit",
     "test:smoke": "npm run build && vitest run --project smoke",
+    "schema": "vitest run test/schema.test.ts --project unit --update",
     "check": "npm run typecheck && npm test && npm run test:smoke"
   },
   "dependencies": {
@@ -25,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "20.19.43",
+    "ajv": "8.20.0",
     "tsup": "8.5.1",
     "typescript": "7.0.2",
     "vitest": "4.1.11"

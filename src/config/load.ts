@@ -108,6 +108,19 @@ export function configFileSchema(hooks: readonly Hook<any>[]): s.ObjectSchema<Co
   ) as unknown as s.ObjectSchema<ConfigFile>;
 }
 
+/**
+ * The JSON Schema for config files, as shipped in `hardhooks.schema.json`
+ * (regenerate with `npm run schema`).
+ */
+export function configJsonSchema(hooks: readonly Hook<any>[]): s.JsonSchema {
+  return {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    $id: schemaUrl,
+    title: "hardhooks config",
+    ...configFileSchema(hooks).toJsonSchema(),
+  };
+}
+
 type FileResult = { file: string; config: ConfigFile } | { errors: ConfigError[] } | undefined;
 
 function readConfigFile(file: string, schema: s.ObjectSchema<ConfigFile>): FileResult {
