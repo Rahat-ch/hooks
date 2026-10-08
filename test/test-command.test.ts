@@ -3,14 +3,15 @@
  * case files run through the dispatcher against the resolved config, in a
  * temp project and home. Asserts only the printed report and the exit code.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Environment } from "../src/environment";
-import type { Hook } from "../src/hooks/hook";
+import { defineHook, type Hook } from "../src/hooks/hook";
+import { hooks } from "../src/hooks/registry";
 import { runTests } from "../src/testing";
 import type { FixtureFile } from "../src/testing/fixture-files";
-import { fakeEnvironment, writeRepoConfig } from "./helpers";
+import { fakeEnvironment, hermeticGitEnvironment, initRealGitRepo, writeRepoConfig } from "./helpers";
 
 interface TestRunOptions {
   env?: Environment;
@@ -78,6 +79,77 @@ describe("hardhooks test", () => {
     expect(result.stdout).toMatch(/SKIP\s+git-guard\/force-push-blocked.*\n\s+git-guard is disabled/);
     expect(result.stdout).toMatch(/PASS\s+session-context\/compact-adds-date/);
     expect(result.exitCode, result.stdout).toBe(0);
+  });
+
+  it("matches reasons and added context, for any Event, with extra payload fields", async () => {
+    const env = fakeEnvironment();
+    writeCases(env, "cases.json", [
+      { name: "says why", bash: "git push --force origin main", expect: { decision: "block", reason: "force" } },
+      { name: "dates the session", event: "SessionStart", payload: { source: "compact" }, expect: { context: "^today: \\d{4}-" } },
+      { name: "wrong reason", bash: "git push --force origin main", expect: { decision: "block", reason: "lease" } },
+      { name: "wrong context", event: "SessionStart", expect: { context: "Branch:" } },
+    ]);
+    const result = await runTestCommand({ env });
+    expect(result.stdout).toMatch(/PASS\s+cases\.json\s+says why/);
+    expect(result.stdout).toMatch(/PASS\s+cases\.json\s+dates the session/);
+    expect(result.stdout).toMatch(/FAIL\s+cases\.json\s+wrong reason\n\s+reason: expected to match \/lease\/i, got ".*force/);
+    expect(result.stdout).toMatch(/FAIL\s+cases\.json\s+wrong context\n\s+context: expected to match \/Branch:\/i, got "Today: /);
+    expect(result.exitCode).toBe(1);
+  });
+
+  describe("side effects", () => {
+    it("never runs formatters or other programs from the user's config", async () => {
+      const env = fakeEnvironment({ processRunner: "real" });
+      const marker = join(env.home, "formatter-ran");
+      writeRepoConfig(env, {
+        hooks: { "format-on-edit": { command: ["node", "-e", `require("fs").writeFileSync(${JSON.stringify(marker)}, "")`] } },
+      });
+      writeFileSync(join(env.cwd, "a.ts"), "const  a=1\n");
+      writeCases(env, "edit.json", [{ name: "writing a file is fine", event: "PostToolUse", write: "a.ts", expect: "allow" }]);
+      const result = await runTestCommand({ env });
+      expect(result.stdout).toMatch(/PASS\s+edit\.json/);
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it("keeps Hook state (audit logs, check fingerprints) out of the user's state directory", async () => {
+      const env = fakeEnvironment();
+      const stateful = defineHook({
+        name: "stateful",
+        description: "test-only: records each Stop in the state dir",
+        events: ["Stop"],
+        failMode: "open",
+        defaults: { standard: { enabled: true, options: {} }, strict: { enabled: true, options: {} } },
+        run(_event, _options, hookEnv) {
+          mkdirSync(hookEnv.stateDir, { recursive: true });
+          writeFileSync(join(hookEnv.stateDir, "stopped"), "");
+          return undefined;
+        },
+      });
+      writeCases(env, "stop.json", [{ name: "stop is fine", event: "Stop", expect: "allow" }]);
+      const result = await runTestCommand({ env, hooks: [...hooks, stateful] });
+      expect(result.stdout).toMatch(/PASS\s+stop\.json/);
+      expect(readdirSync(env.stateDir)).toEqual([]);
+    });
+
+    it("lets user cases see the real git repository", async () => {
+      const env = hermeticGitEnvironment();
+      const repo = initRealGitRepo(env);
+      writeRepoConfig(env, { preset: "strict" });
+      writeCases(env, "branches.json", [{ name: "no commits on main", bash: "git commit -m wip", expect: { decision: "block", reason: "`main`" } }]);
+      expect((await runTestCommand({ env })).stdout).toMatch(/PASS\s+branches\.json\s+no commits on main/);
+
+      repo.git("switch", "-q", "-c", "feature");
+      // Only read-only git runs: a configured command that would write is never started.
+      writeRepoConfig(env, {
+        preset: "strict",
+        hooks: { "session-context": { commands: [["git", "-C", env.cwd, "commit", "-q", "--allow-empty", "-m", "from hardhooks test"]] } },
+      });
+      writeCases(env, "session.json", [{ name: "session starts", event: "SessionStart", expect: { context: "feature" } }]);
+      const onFeature = await runTestCommand({ env });
+      expect(onFeature.stdout).toMatch(/FAIL\s+branches\.json\s+no commits on main\n\s+decision: expected block, got none/);
+      expect(onFeature.stdout).toMatch(/PASS\s+session\.json\s+session starts/);
+      expect(repo.git("log", "--format=%s")).not.toMatch(/from hardhooks test/);
+    });
   });
 
   it("never fails a shipped fixture just because the user configured a Hook's options", async () => {

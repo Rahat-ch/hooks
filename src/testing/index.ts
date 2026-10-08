@@ -66,7 +66,7 @@ export async function runTests(request: TestRequest): Promise<number> {
   try {
     const stateDir = join(sandboxDir, "state");
     const fixtureEnv: Environment = { ...env, stateDir, processRunner: sandboxProcessRunner({ realGit: false }) };
-    const caseEnv: Environment = { ...env, stateDir, processRunner: sandboxProcessRunner({ realGit: false }) };
+    const caseEnv: Environment = { ...env, stateDir, processRunner: sandboxProcessRunner({ realGit: true }) };
     const outcomes: Outcome[] = [];
     const print = (o: Outcome) => {
       outcomes.push(o);
