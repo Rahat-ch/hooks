@@ -1,0 +1,15 @@
+{
+  "description": "--force-with-lease asks the user",
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "fixture-session",
+    "transcript_path": "/home/user/.claude/projects/demo/transcript.jsonl",
+    "cwd": "/home/user/demo",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": { "command": "git push --force-with-lease origin feature", "description": "Force-push the rebased branch" },
+    "tool_use_id": "toolu_fixture"
+  },
+  "expect": { "decision": "ask", "reason": "force-with-lease" }
+}
