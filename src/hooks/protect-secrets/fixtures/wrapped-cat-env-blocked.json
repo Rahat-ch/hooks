@@ -17,5 +17,6 @@
   "expect": {
     "decision": "block",
     "reason": "\\.env"
-  }
+  },
+  "assumes": { "options": { "allow": [] } }
 }

@@ -15,5 +15,6 @@
   },
   "expect": {
     "decision": "none"
-  }
+  },
+  "assumes": { "options": { "protect": [] } }
 }

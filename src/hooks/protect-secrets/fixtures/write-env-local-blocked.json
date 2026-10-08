@@ -17,5 +17,6 @@
   "expect": {
     "decision": "block",
     "reason": "pattern `\\.env\\.\\*`"
-  }
+  },
+  "assumes": { "options": { "allow": [] } }
 }
