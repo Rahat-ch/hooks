@@ -29,7 +29,7 @@
               "type": "boolean"
             },
             "command": {
-              "description": "Command line to run, through the platform shell (sh -c on POSIX, cmd.exe /d /s /c on Windows). Omit to autodetect.",
+              "description": "Command line to run when the Host stops, through the platform shell (sh -c on POSIX, cmd.exe /d /s /c on Windows). Omit to autodetect from package.json scripts (lint, typecheck, test), ruff, go vet or cargo check.",
               "type": "string"
             },
             "timeoutSeconds": {
@@ -38,7 +38,7 @@
               "minimum": 1
             },
             "outputBytes": {
-              "description": "Most bytes of failure output to put in the block reason, which enters the Host's context.",
+              "description": "Most bytes of failure output in the block reason, which enters the Host's context.",
               "type": "integer",
               "minimum": 200,
               "maximum": 9000
@@ -47,6 +47,25 @@
               "description": "Consecutive Stop blocks before check gives up and lets the Host stop. Keep it below Claude Code's own cap (8).",
               "type": "integer",
               "minimum": 1
+            },
+            "subagentStop": {
+              "description": "Also run the check when a subagent stops.",
+              "type": "boolean"
+            },
+            "editCommand": {
+              "description": "Per-edit mode: a command line to run after each file edit, with {file} replaced by the edited file (appended when absent). Failures are fed back to the Host, never blocking.",
+              "type": "string"
+            },
+            "editTimeoutSeconds": {
+              "description": "Seconds before an edit command is killed.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "editOutputBytes": {
+              "description": "Most bytes of edit-command output fed back after each edit.",
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 9000
             }
           },
           "additionalProperties": false

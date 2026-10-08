@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   claudeCode,
   expectBlocked,
+  expectContext,
   expectMessage,
   expectNoDecision,
   fakeEnvironment,
@@ -23,7 +24,11 @@ const node = (script: string) => `node -e "${script}"`;
 
 /** A temp project with real processes and enough of the real environment (PATH) to find node, git and the shell. */
 function realEnvironment(): FakeEnvironment {
-  const passthrough = ["PATH", "Path", "PATHEXT", "SystemRoot", "ComSpec", "TEMP", "TMP", "WINDIR"];
+  const passthrough = [
+    ...["PATH", "Path", "PATHEXT", "SystemRoot", "ComSpec", "WINDIR", "TEMP", "TMP"],
+    // npm on Windows looks for its config and prefix here.
+    ...["APPDATA", "LOCALAPPDATA", "USERPROFILE"],
+  ];
   const env = Object.fromEntries(passthrough.flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])));
   return fakeEnvironment({ processRunner: "real", env });
 }
@@ -54,6 +59,21 @@ describe("check", () => {
 
     const { reason } = expectBlocked(await runEvent(claudeCode.stop(), { env }), /FIRST-LINE[\s\S]*omitted[\s\S]*LAST-LINE/);
     expect(Buffer.byteLength(reason!)).toBeLessThan(1500);
+  });
+
+  describe("Presets", () => {
+    it("is off under `standard`", async () => {
+      const env = realEnvironment();
+      writePackageJson(env, { lint: node("process.exit(1)") });
+      expectNoDecision(await runEvent(claudeCode.stop(), { env }));
+    });
+
+    it("is on under `strict`", async () => {
+      const env = realEnvironment();
+      writeRepoConfig(env, { preset: "strict" });
+      writePackageJson(env, { lint: node("console.log('lint failed'); process.exit(1)") });
+      expectBlocked(await runEvent(claudeCode.stop(), { env }), /lint failed/);
+    });
   });
 
   describe("failing open", () => {
@@ -183,6 +203,61 @@ describe("check", () => {
       await runEvent(claudeCode.stop(), { env });
       await runEvent(claudeCode.stop(), { env });
       expect(counter.runs()).toBe(2);
+    });
+  });
+
+  describe("opt-in extras", () => {
+    const failing = node("console.log('red'); process.exit(1)");
+
+    it("does nothing on SubagentStop unless enabled", async () => {
+      const env = realEnvironment();
+      enableCheck(env, { command: failing });
+      expectNoDecision(await runEvent(claudeCode.subagentStop(), { env }));
+    });
+
+    it("blocks SubagentStop when enabled", async () => {
+      const env = realEnvironment();
+      enableCheck(env, { command: failing, subagentStop: true });
+      expectBlocked(await runEvent(claudeCode.subagentStop(), { env }), /red/);
+    });
+
+    const edit = (env: FakeEnvironment, file = "src/a.ts") =>
+      claudeCode.postToolUse("Edit", { file_path: join(env.cwd, file), old_string: "a", new_string: "b" });
+
+    it("does nothing after an edit unless per-edit mode is enabled", async () => {
+      const env = realEnvironment();
+      enableCheck(env, { command: failing });
+      expectNoDecision(await runEvent(edit(env), { env }));
+    });
+
+    it("per-edit mode runs the edit command on the changed file and feeds back its failure", async () => {
+      const env = realEnvironment();
+      enableCheck(env, { editCommand: `${node("console.log('2 problems in ' + process.argv[1]); process.exit(1)")} {file}` });
+
+      const observed = expectContext(await runEvent(edit(env, "src/my file.ts"), { env }), /2 problems in .*src[\\/]my file\.ts/);
+      expect(observed.decision).toBe("none");
+    });
+
+    it("per-edit mode appends the file when the command has no {file} placeholder", async () => {
+      const env = realEnvironment();
+      enableCheck(env, { editCommand: node("console.log('checked ' + process.argv[1]); process.exit(1)") });
+      expectContext(await runEvent(edit(env), { env }), /checked .*src[\\/]a\.ts/);
+    });
+
+    it("per-edit mode caps its feedback", async () => {
+      const env = realEnvironment();
+      enableCheck(env, {
+        editCommand: node("for (let i = 0; i < 2000; i++) console.log('problem ' + i); process.exit(1)"),
+        editOutputBytes: 300,
+      });
+      const { context } = expectContext(await runEvent(edit(env), { env }), /problem 0[\s\S]*omitted/);
+      expect(Buffer.byteLength(context!)).toBeLessThan(600);
+    });
+
+    it("per-edit mode stays silent when the edit command passes", async () => {
+      const env = realEnvironment();
+      enableCheck(env, { editCommand: node("process.exit(0)") });
+      expectNoDecision(await runEvent(edit(env), { env }));
     });
   });
 
