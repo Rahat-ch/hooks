@@ -51,6 +51,15 @@ function turnSeconds(event: HookEvent, env: Environment): number | undefined {
   return (env.clock.now().getTime() - Date.parse(startedAt)) / 1000;
 }
 
+/** "45s", "2m 5s", "1h 2m". */
+function formatDuration(totalSeconds: number): string {
+  const seconds = Math.round(totalSeconds);
+  const [h, m, s] = [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60];
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
 /**
  * An OSC 9 desktop notification (iTerm2, WezTerm, Windows Terminal, ConEmu),
  * minus control characters so the text can't end the sequence early or smuggle
@@ -87,7 +96,7 @@ function decide(event: HookEvent, options: Options, env: Environment): Decision 
   if (event.name === "Stop") {
     const seconds = turnSeconds(event, env);
     if (seconds === undefined || seconds <= options.thresholdSeconds) return undefined;
-    return deliver({ title, body: `Finished after ${Math.round(seconds)}s` }, options, env);
+    return deliver({ title, body: `Finished after ${formatDuration(seconds)}` }, options, env);
   }
   return deliver({ title, body: event.message ?? "Needs your attention" }, options, env);
 }

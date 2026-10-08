@@ -230,6 +230,47 @@ describe("notify", () => {
   });
 
   it.each([
+    { preset: "standard", notified: 0 },
+    { preset: "strict", notified: 1 },
+  ])("is enabled by the $preset Preset: $notified notification(s)", async ({ preset, notified }) => {
+    const env = envWith("linux", ["notify-send"]);
+    writeRepoConfig(env, { preset });
+    expectNoDecision(await runEvent(claudeCode.notification("Claude needs your permission"), { env }));
+    expect(spawns(env)).toHaveLength(notified);
+  });
+
+  it("times each session's turn separately", async () => {
+    const { env, advanceSeconds } = withMovableClock(envWith("linux", ["notify-send"]));
+    const config = notifyConfig();
+    const session = (id: string) => ({ session_id: id });
+
+    await runEvent(claudeCode.userPromptSubmit("long task", session("a")), { env, config });
+    advanceSeconds(40);
+    await runEvent(claudeCode.userPromptSubmit("quick question", session("b")), { env, config });
+    advanceSeconds(5);
+    await runEvent(claudeCode.stop(session("b")), { env, config });
+    expect(spawns(env)).toHaveLength(0);
+    await runEvent(claudeCode.stop(session("a")), { env, config });
+    expect(spawns(env)).toHaveLength(1);
+    expect(spawns(env)[0]!.args.join(" ")).toContain("45s");
+  });
+
+  it("stays quiet at Stop when it never saw the turn start", async () => {
+    const env = envWith("linux", ["notify-send"]);
+    expectNoDecision(await runEvent(claudeCode.stop(), { env, config: notifyConfig() }));
+    expect(spawns(env)).toHaveLength(0);
+  });
+
+  it.each([
+    { seconds: 125, said: "2m 5s" },
+    { seconds: 3720, said: "1h 2m" },
+  ])("says a $seconds s turn took $said", async ({ seconds, said }) => {
+    const env = envWith("linux", ["notify-send"]);
+    await turnLasting(seconds, env);
+    expect(spawns(env)[0]!.args.join(" ")).toContain(`after ${said}`);
+  });
+
+  it.each([
     { thresholdSeconds: 10, seconds: 15, notified: 1 },
     { thresholdSeconds: 60, seconds: 45, notified: 0 },
   ])(
