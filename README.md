@@ -90,9 +90,9 @@ Set a Preset in `.hardhooks.json`. With no config at all, you get `standard`.
 | [`check`](#check) | | off | on |
 | [`notify`](#notify) | | off | on |
 | [`audit-log`](#audit-log-1) | | off | on |
-| `ask` on a Host that can't ask | | allowed, with a warning | blocked |
+| `ask` that nobody will see | | blocked | blocked |
 
-Some Decisions are `ask`: the Host asks you to confirm, as with `--force-with-lease`. A few Hosts ignore `ask` (see [Host compatibility](#host-compatibility)). There, `standard` lets the command run and shows a warning, and `strict` blocks it.
+Some Decisions are `ask`: the Host asks you to confirm, as with `--force-with-lease`. An `ask` only protects you if you see the prompt, so where you won't, it becomes a block under both Presets: on Hosts that ignore `ask` (see [Host compatibility](#host-compatibility)), and in Claude Code's `auto`, `dontAsk` and `bypassPermissions` permission modes. The block tells the agent why and asks it to have you run the command yourself (in Claude Code, `!` followed by the command). In `default`, `plan` and `acceptEdits` mode, Claude Code asks as usual.
 
 ## Hooks
 
@@ -381,11 +381,13 @@ Every Host below reads hardhooks' entries from `.claude/settings.json` and `.cla
 | --- | --- | --- | --- |
 | Claude Code | yes | yes | none |
 | Copilot CLI | yes | yes | none known |
-| Cursor | yes (by default) | no: `ask` isn't enforced, so the Preset fallback applies | no Notification Event, so `notify` only fires on long turns. Bash is reported as `Shell`. |
+| Cursor | yes (by default) | no: `ask` isn't enforced, so it blocks instead | no Notification Event, so `notify` only fires on long turns. Bash is reported as `Shell`. |
 | Devin CLI | yes (by default) | no: only approve/block | no Notification or SubagentStop Event |
 | Continue (`cn` CLI) | yes | no: only `deny` is acted on | none known |
 
-The Copilot cloud agent is detected too. It treats `ask` as `deny`, so the Preset fallback applies there as well.
+Where a Host doesn't honour `ask`, hardhooks blocks instead, so nothing that needed your confirmation runs without it. The Copilot cloud agent is detected too. It treats `ask` as `deny`, and hardhooks blocks there as well, with a reason the agent can act on.
+
+In Claude Code, an `ask` also becomes a block when the payload's `permission_mode` is `auto`, `dontAsk` or `bypassPermissions`. Claude Code's docs say a hook's `ask` still prompts in auto mode, but in a real auto-mode session it ran `rm -rf src` without asking ([#26](https://github.com/Rahat-ch/hooks/issues/26)). Copilot CLI sends no permission mode, so its `ask` always passes through, including under `--allow-all-tools`.
 
 ## Uninstall
 
@@ -405,6 +407,7 @@ npm rm -g hardhooks
 - **Guards see what the agent asks to run.** They don't see what a program does once it's running. A build script, a git hook or a Makefile target can still delete files.
 - **It isn't a sandbox.** hardhooks catches the common, catastrophic mistakes of a well-meaning agent. It doesn't contain a hostile one. For untrusted code, use real isolation (containers, VMs, OS sandboxing) as well.
 - **One Node spawn per Event**, about 19 ms. Through the plugin, every Event spawns, even ones no enabled Hook handles. Those exit immediately.
+- **No confirmation without a human.** Where nobody will see a prompt (auto, don't-ask and bypass-permissions modes, and Hosts that ignore `ask`), anything a Guard would ask about is blocked, and you run it yourself. Copilot CLI's `--allow-all-tools` can't be detected from its payload, so there an `ask` still relies on Copilot CLI to prompt.
 - **Host support** beyond Claude Code is still unverified (see above).
 
 ## License
