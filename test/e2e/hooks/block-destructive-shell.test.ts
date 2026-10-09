@@ -221,6 +221,11 @@ describe("block-destructive-shell", () => {
       expectAsked(await repo().event(bash(command)), reason);
     });
 
+    it("blocks instead of asking in Claude Code's auto mode, where the prompt never showed (#26)", async () => {
+      const observed = expectBlocked(await repo().event(claudeCode.bash("rm -rf src", { permission_mode: "auto" })), /tracked by git/);
+      expect(observed.reason).toMatch(/auto mode[\s\S]*ask the user to run it themselves/);
+    });
+
     it("asks when the project isn't a git repository, since nothing can be recovered", async () => {
       const box = sandbox();
       box.writeFile("build/out.js");

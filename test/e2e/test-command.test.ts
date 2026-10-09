@@ -50,29 +50,41 @@ describe("hardhooks test", () => {
     expect(result.exitCode, result.stdout + result.stderr).toBe(0);
   });
 
-  it("runs a case as the Host it names, so asks fall back where that Host can't ask", async () => {
+  it("runs a case as the Host it names, so asks become blocks where that Host can't ask", async () => {
     // A CURSOR_VERSION leaked from the user's terminal must not change any case's Host.
     const box = sandbox({ env: { CURSOR_VERSION: "1.7.2" } });
     const lease = "git push --force-with-lease origin feature";
-    writeCases(box, "hosts.json", [
+    const cases = [
       { name: "claude-code asks", bash: lease, expect: "ask" },
       { name: "copilot-cli asks", host: "copilot-cli", bash: lease, expect: "ask" },
       ...["cursor", "continue-cli", "copilot-cloud", "devin-cli"].map((host) => ({
-        name: `${host} can't ask, so standard allows`,
+        name: `${host} can't ask, so it blocks`,
         host,
         bash: lease,
-        expect: "allow",
+        expect: { decision: "block", reason: "can't ask[\\s\\S]*ask the user to run it themselves" },
       })),
+    ];
+    for (const preset of ["standard", "strict"]) {
+      box.writeRepoConfig({ preset });
+      writeCases(box, "hosts.json", cases);
+      const result = await runTest(box);
+      expect(result.stdout).not.toMatch(/FAIL/);
+      expect(result.stdout).toMatch(/PASS\s+hosts\.json\s+devin-cli can't ask/);
+      expect(result.exitCode, result.stdout).toBe(0);
+    }
+  });
+
+  it("runs a case in the permission mode its payload names (default: an attended one)", async () => {
+    const box = sandbox();
+    const lease = "git push --force-with-lease origin feature";
+    writeCases(box, "modes.json", [
+      { name: "default mode asks", bash: lease, expect: "ask" },
+      { name: "auto mode blocks", bash: lease, payload: { permission_mode: "auto" }, expect: { decision: "block", reason: "auto mode" } },
     ]);
     const result = await runTest(box);
-    expect(result.stdout).not.toMatch(/FAIL/);
-    expect(result.stdout).toMatch(/PASS\s+hosts\.json\s+devin-cli can't ask/);
+    expect(result.stdout).toMatch(/PASS\s+modes\.json\s+default mode asks/);
+    expect(result.stdout).toMatch(/PASS\s+modes\.json\s+auto mode blocks/);
     expect(result.exitCode, result.stdout).toBe(0);
-
-    box.writeRepoConfig({ preset: "strict" });
-    writeCases(box, "hosts.json", [{ name: "strict blocks instead", host: "devin-cli", bash: lease, expect: { decision: "block", reason: "Devin CLI" } }]);
-    const strict = await runTest(box);
-    expect(strict.stdout).toMatch(/PASS\s+hosts\.json\s+strict blocks instead/);
   });
 
   it("fails a case whose Hook is disabled, showing the expected and actual Decisions", async () => {

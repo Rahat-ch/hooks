@@ -97,3 +97,33 @@ export function detectHost(payload: Payload, env: Env, rules: readonly Detection
 export function capabilitiesOf(host: string): HostCapabilities {
   return hostCapabilities[host as HostId] ?? hostCapabilities["claude-code"];
 }
+
+/**
+ * Claude Code permission modes (`permission_mode` in every payload) in which
+ * no one is there to answer a prompt, by their names in messages. The others
+ * (default, plan, acceptEdits) keep prompting. https://code.claude.com/docs/en/hooks
+ *
+ * The docs say an `ask` from a hook still prompts in auto mode, but in a real
+ * session (#26) Claude Code ran `rm -rf src` there without asking. Copilot
+ * CLI's payload has no mode field (https://docs.github.com/en/copilot/reference/hooks-reference),
+ * and the other Hosts can't ask at all.
+ */
+const unattendedModes: ReadonlyMap<string, string> = new Map([
+  ["auto", "auto mode"],
+  ["bypassPermissions", "bypass-permissions mode"],
+  ["dontAsk", "don't-ask mode"],
+]);
+
+/**
+ * Why a PreToolUse `ask` would not reach a human, or undefined when the Host
+ * will show the user the prompt: the Host ignores `ask`, or the session's
+ * permission mode means nobody is asked. A missing or unknown mode counts as
+ * attended.
+ */
+export function unansweredAskReason(host: string, permissionMode: string | undefined): string | undefined {
+  const { name, ask } = capabilitiesOf(host);
+  if (!ask) return `${name} can't ask for confirmation`;
+  const mode = permissionMode === undefined ? undefined : unattendedModes.get(permissionMode);
+  if (mode !== undefined) return `${name} is in ${mode}, where confirmation prompts can't be relied on`;
+  return undefined;
+}

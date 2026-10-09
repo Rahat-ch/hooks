@@ -78,6 +78,7 @@ export function parseClaudeCodePayload(
     host: detectHost(p, env),
     cwd: str(p.cwd) ?? fallbackCwd,
     sessionId: str(p.session_id),
+    permissionMode: str(p.permission_mode),
     tool,
     toolResponse: p.tool_response,
     stopHookActive: typeof p.stop_hook_active === "boolean" ? p.stop_hook_active : undefined,
@@ -124,9 +125,8 @@ export function renderClaudeCodeOutput(eventName: string, outcome: Outcome): str
     }
   }
   // Shown to the user only; a synchronous hook's systemMessage never reaches the model.
-  // Hooks' messages first, then the dispatcher's own warning (e.g. the ask fallback).
+  // The unblockable Event's reason first, then the Hooks' messages.
   if (outcome.message !== undefined) systemMessages.push(outcome.message);
-  if (outcome.warning !== undefined) systemMessages.push(outcome.warning);
   if (systemMessages.length > 0) out.systemMessage = systemMessages.join("\n");
   if (outcome.context !== undefined && contextEvents.has(eventName)) specific.additionalContext = outcome.context;
   // Universal field: the Host writes it to its terminal, on every Event (interactive sessions only).

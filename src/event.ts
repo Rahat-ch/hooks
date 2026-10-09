@@ -40,6 +40,8 @@ export interface HookEvent {
   /** The project directory the Host is working in. */
   readonly cwd: string;
   readonly sessionId?: string | undefined;
+  /** The Host's permission mode, e.g. Claude Code's "default" or "auto", when it sends one. */
+  readonly permissionMode?: string | undefined;
   /** The tool about to run (PreToolUse) or that just ran (PostToolUse). */
   readonly tool?: ToolCall | undefined;
   /** PostToolUse: the tool's result. */

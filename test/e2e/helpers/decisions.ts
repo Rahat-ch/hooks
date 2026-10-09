@@ -9,19 +9,6 @@ import { observe, type ObservedDecision } from "../../../src/testing/observe";
  */
 export { observe, type ObservedDecision } from "../../../src/testing/observe";
 
-/**
- * The Host proceeds without a permission Decision (its own prompts apply) but
- * shows the user a warning (`systemMessage`).
- */
-export function expectAllowedWithWarning(result: HostResult, warning?: RegExp): ObservedDecision {
-  expect(result.exitCode, result.stderr).toBe(0);
-  const observed = observe(result);
-  expect(observed.decision, result.stdout).toBe("none");
-  expect(observed.message, result.stdout).toBeTruthy();
-  if (warning) expect(observed.message).toMatch(warning);
-  return observed;
-}
-
 /** The Host sees a block (deny / decision:block) with a reason, via JSON on stdout and exit 0. */
 export function expectBlocked(result: HostResult, reason?: RegExp): ObservedDecision {
   expect(result.exitCode, result.stderr).toBe(0);

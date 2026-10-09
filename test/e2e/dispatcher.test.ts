@@ -1,7 +1,7 @@
 /**
  * The dispatcher, through `hardhooks run <Event>` exactly as a Host runs it:
  * Hook selection, Decision merging, fail-closed Guards, Host detection and
- * the ask fallback, observers, and the Host protocol. Every case uses real
+ * asks nobody would see, observers, and the Host protocol. Every case uses real
  * Hooks with real configs (ADR-0006).
  */
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   claudeCode,
-  expectAllowedWithWarning,
   expectAsked,
   expectBlocked,
   expectContext,
@@ -145,31 +144,67 @@ describe("dispatcher", () => {
       expectAsked(await box.event(branchDelete(hostPayloadFields.copilotCli)), /branch -D/);
       box.writeRepoConfig({ preset: "strict" });
       expectAsked(await box.event(branchDelete()), /branch -D/);
+      expectAsked(await box.event(branchDelete(hostPayloadFields.copilotCli)), /branch -D/);
     });
 
-    it("under standard, allows with a warning where the Host can't ask", async () => {
-      const result = await sandbox().event(branchDelete(hostPayloadFields.cursor));
-      expectAllowedWithWarning(result, /Cursor can't ask[\s\S]*git-guard[\s\S]*branch -D/);
+    const presets = ["standard", "strict"] as const;
+    const hostsWithoutAsk: [string, Record<string, unknown>, Record<string, string>, RegExp][] = [
+      ["Cursor", hostPayloadFields.cursor, {}, /Cursor can't ask/],
+      ["Continue CLI", hostPayloadFields.continueCli, {}, /Continue CLI can't ask/],
+      ["Devin CLI", { transcript_path: undefined }, { DEVIN_PROJECT_DIR: "/p" }, /Devin CLI can't ask/],
+      ["Copilot cloud agent", hostPayloadFields.copilotCli, { COPILOT_AGENT_PROMPT: "fix it" }, /Copilot cloud agent can't ask/],
+    ];
+    describe.each(presets)("under %s, where the Host can't ask", (preset) => {
+      it.each(hostsWithoutAsk)("%s: blocks a Guard's ask, telling the agent to hand it to the user", async (_, fields, vars, why) => {
+        const box = sandbox({ env: vars });
+        box.writeRepoConfig({ preset });
+        const observed = expectBlocked(await box.event(branchDelete(fields)), /\[hardhooks\/git-guard\][^\n]*branch -D/);
+        expect(observed.reason).toMatch(why);
+        expect(observed.reason).toMatch(/needs the user's confirmation[\s\S]*ask the user to run it themselves/);
+        expect(observed.message).toBeUndefined();
+      });
     });
 
-    it("under strict, blocks where the Host can't ask", async () => {
-      const box = sandbox({ env: { DEVIN_PROJECT_DIR: "/p" } });
-      box.writeRepoConfig({ preset: "strict" });
-      const result = await box.event(branchDelete({ transcript_path: undefined }));
-      expectBlocked(result, /Devin CLI[\s\S]*strict[\s\S]*branch -D/);
+    // Claude Code's permission modes (https://code.claude.com/docs/en/hooks). A Guard's ask must
+    // reach a human: in auto mode Claude Code ran an asked `rm -rf src` without a prompt (#26).
+    const attended = ["default", "plan", "acceptEdits", undefined, "someFutureMode"];
+    const unattended: [string, RegExp][] = [
+      ["auto", /Claude Code is in auto mode/],
+      ["bypassPermissions", /Claude Code is in bypass-permissions mode/],
+      ["dontAsk", /Claude Code is in don't-ask mode/],
+    ];
+    describe.each(presets)("under %s, by Claude Code permission mode", (preset) => {
+      const box = () => {
+        const b = sandbox();
+        b.writeRepoConfig({ preset });
+        return b;
+      };
+
+      it.each(attended)("permission_mode %s: an ask still asks", async (mode) => {
+        const observed = expectAsked(await box().event(branchDelete({ permission_mode: mode })), /branch -D/);
+        expect(observed.reason).not.toMatch(/confirmation/);
+      });
+
+      it.each(unattended)("permission_mode %s: an ask becomes a block naming the mode", async (mode, why) => {
+        const observed = expectBlocked(await box().event(branchDelete({ permission_mode: mode })), /\[hardhooks\/git-guard\][^\n]*branch -D/);
+        expect(observed.reason).toMatch(why);
+        expect(observed.reason).toMatch(/ask the user to run it themselves/);
+      });
+
+      it.each([...attended, ...unattended.map(([mode]) => mode)])("permission_mode %s: a block stays a plain block", async (mode) => {
+        const payload = claudeCode.bash("git push --force origin main", { permission_mode: mode });
+        const observed = expectBlocked(await box().event(payload), /git-guard[\s\S]*force/);
+        expect(observed.reason).not.toMatch(/confirmation/);
+      });
     });
 
-    it("a real Guard's ask falls back too", async () => {
+    it("an ask and a block together stay a plain block, in any mode and on any Host", async () => {
+      const command = "git branch -D old && git push --force origin main";
       const box = sandbox();
-      const payload = branchDelete(hostPayloadFields.cursor);
-      expectAllowedWithWarning(await box.event(payload), /git-guard[\s\S]*branch -D/);
-      box.writeRepoConfig({ preset: "strict" });
-      expectBlocked(await box.event(payload), /git-guard[\s\S]*branch -D/);
-    });
-
-    it("leaves blocks alone where the Host can't ask", async () => {
-      const payload = claudeCode.bash("git branch -D old && git push --force origin main", hostPayloadFields.cursor);
-      expect(expectBlocked(await sandbox().event(payload)).reason).not.toMatch(/can't ask/);
+      for (const payload of [claudeCode.bash(command, hostPayloadFields.cursor), claudeCode.bash(command, { permission_mode: "auto" })]) {
+        const observed = expectBlocked(await box.event(payload), /force/);
+        expect(observed.reason).not.toMatch(/confirmation|branch -D/);
+      }
     });
   });
 

@@ -14,7 +14,7 @@ export interface ObservedDecision {
   terminalSequence?: string;
   /**
    * Shown to the user only (Claude Code's `systemMessage`), never to the model:
-   * Hooks' messages and the dispatcher's warnings (e.g. the ask fallback), joined.
+   * an unblockable Event's reason and the Hooks' messages, joined.
    */
   message?: string;
 }

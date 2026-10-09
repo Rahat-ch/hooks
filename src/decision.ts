@@ -41,11 +41,6 @@ export interface Outcome {
   readonly terminalSequence: string | undefined;
   /** Messages for the user from every Hook, in order, each prefixed with the Hook name. */
   readonly message: string | undefined;
-  /**
-   * The dispatcher's own notice for the user (not from a Hook), e.g. that the
-   * Host couldn't ask. Shown after the Hooks' messages.
-   */
-  readonly warning?: string | undefined;
 }
 
 const rank = { allow: 1, ask: 2, block: 3 } as const;

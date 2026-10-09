@@ -3,7 +3,7 @@
  * out. `hardhooks run <Event>` is a thin wrapper around `dispatch`, and
  * `hardhooks test` replays its cases through it.
  */
-import { hookSettings, type PresetName, type ResolvedConfig } from "../config";
+import { hookSettings, type ResolvedConfig } from "../config";
 import { formatConfigError, loadConfig, type ConfigError } from "../config/load";
 import { block, combineDecisions, message, type HookDecision, type Outcome } from "../decision";
 import type { Environment } from "../environment";
@@ -11,7 +11,7 @@ import type { EventName, HookEvent } from "../event";
 import { activeEvents, type Hook, type HookRun } from "../hooks/hook";
 import { hooks } from "../hooks/registry";
 import { parseClaudeCodePayload, renderClaudeCodeOutput } from "../hosts/claude-code";
-import { capabilitiesOf } from "../hosts";
+import { unansweredAskReason } from "../hosts";
 import { noticeDue, trustStatus, untrustedReason, type TrustStatus } from "../trust";
 
 export interface DispatchRequest {
@@ -171,8 +171,7 @@ export async function dispatch(request: DispatchRequest): Promise<HostResult> {
     ...(run.decision ? [{ hook: run.hook, decision: run.decision }] : []),
     ...(notice ? [notice] : []),
   ]);
-  const outcome = askFallback(eventName, combineDecisions(decisions), event.host, config.preset);
-  if (outcome.warning !== undefined) stderr.push(`hardhooks: ${outcome.warning}`);
+  const outcome = askFallback(eventName, combineDecisions(decisions), event);
   const result = render(eventName, outcome, stderr);
 
   // Observers (audit-log) see the final result; they can't change it, and their errors are ignored.
@@ -202,26 +201,22 @@ function lazyTrust(request: DispatchRequest, event: HookEvent) {
 }
 
 /**
- * Where the Host ignores `ask` (Cursor, Devin CLI, ...), an ask would let the
- * command run unconfirmed. Under `standard` it becomes an allow with a warning
- * to the user; under `strict` a block.
+ * An `ask` is only safe when a human will see the prompt. Where nobody will
+ * (the Host ignores `ask`, or Claude Code runs in auto, don't-ask or
+ * bypass-permissions mode), it becomes a block under either Preset (ADR-0007),
+ * telling the agent why and to hand the action to the user.
  */
-function askFallback(eventName: EventName, outcome: Outcome, host: string, preset: PresetName): Outcome {
+function askFallback(eventName: EventName, outcome: Outcome, event: HookEvent): Outcome {
   if (eventName !== "PreToolUse" || outcome.permission !== "ask") return outcome;
-  const { name, ask } = capabilitiesOf(host);
-  if (ask) return outcome;
-  if (preset === "strict") {
-    return {
-      ...outcome,
-      permission: "block",
-      reason: `${name} can't ask for confirmation, so the strict Preset blocks this instead:\n${outcome.reason ?? ""}`,
-    };
-  }
+  const why = unansweredAskReason(event.host, event.permissionMode);
+  if (why === undefined) return outcome;
   return {
     ...outcome,
-    permission: undefined,
-    reason: undefined,
-    warning: `${name} can't ask for confirmation, so this was allowed under the standard Preset. It needed confirmation because:\n${outcome.reason ?? ""}`,
+    permission: "block",
+    reason:
+      `${outcome.reason ?? ""}\n` +
+      `This needs the user's confirmation, but ${why}, so hardhooks blocked it. ` +
+      "If it should still happen, ask the user to run it themselves.",
   };
 }
 
