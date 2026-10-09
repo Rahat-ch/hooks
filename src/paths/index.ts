@@ -13,7 +13,11 @@
  * **Native paths** (`resolveOperand`, `isWithin`, `samePath`,
  * `isFilesystemRoot`, `globBase`, `toPosixRelative`, `toSlashes`): `node:path`
  * for the running platform, for code that reasons about real directories.
- * Compared as written (after resolving `.`/`..`), not through symlinks.
+ * Compared as written (after resolving `.`/`..`). Paths from different
+ * sources can spell one directory differently: a Host's cwd reached through
+ * a symlink, or a Windows 8.3 short name (`C:\Users\RUNNER~1`, as in
+ * `%TEMP%`), against git's real, long path. Pass both through `physicalPath`
+ * before comparing them.
  *
  * Case folding is explicit per use:
  *
@@ -26,7 +30,8 @@
  * - display and storage (reasons, settings entries, trust records): never
  *   folded. The path keeps the case it was written in.
  */
-import { isAbsolute, parse, relative, resolve, sep } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
 /** Whether the platform's file systems are case-insensitive by default (NTFS, APFS), so paths compare folded. */
 export function foldsCase(platform: NodeJS.Platform): boolean {
@@ -111,6 +116,43 @@ export function isWithin(path: string, ancestor: string, platform: NodeJS.Platfo
 
 export function samePath(a: string, b: string, platform: NodeJS.Platform): boolean {
   return relative(fold(a, platform), fold(b, platform)) === "";
+}
+
+/**
+ * `path` (made absolute) as the file system names it: the realpath of its
+ * longest existing prefix, so symlinks, junctions and Windows 8.3 short names
+ * resolve and case is as stored, with the rest appended as written. Touches
+ * the file system; the path is returned resolved but otherwise unchanged
+ * when no prefix can be read.
+ *
+ * With `entry`, a final component that is itself a symlink (or junction) is
+ * kept, not followed: the path names the link, as in `rm -r link`, which
+ * deletes only the link.
+ */
+export function physicalPath(path: string, options: { entry?: boolean } = {}): string {
+  const absolute = resolve(path);
+  if (options.entry && !isFilesystemRoot(absolute) && isLink(absolute)) {
+    return join(physicalPath(dirname(absolute)), basename(absolute));
+  }
+  const rest: string[] = [];
+  for (let current = absolute; ; ) {
+    try {
+      return join(realpathSync.native(current), ...rest);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return absolute;
+      rest.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 /** A filesystem root: `/`, `C:\`, or a UNC share root. */

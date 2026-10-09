@@ -3,8 +3,10 @@
  * it: every command goes through the real CLI with real Hooks, real configs
  * and, for deletes inside the project, a real git repo (ADR-0006).
  */
+import { spawnSync } from "node:child_process";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   claudeCode,
   expectAsked,
@@ -17,6 +19,16 @@ import {
 } from "../helpers";
 
 const bash = (command: string) => claudeCode.bash(command);
+
+/** The Windows 8.3 spelling of an existing directory (`C:\Users\RUNNER~1\…`), from cmd's `%~s`. */
+function shortPath(dir: string): string {
+  const result = spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"for %I in ("${dir}") do @echo %~sI"`], {
+    encoding: "utf8",
+    windowsVerbatimArguments: true,
+  });
+  if (result.status !== 0) throw new Error(`cmd could not shorten ${dir}: ${result.stderr}`);
+  return result.stdout.trim();
+}
 
 /** A project with `options` for block-destructive-shell under `preset`. */
 function configured(preset: "standard" | "strict", options: object, box: Sandbox = sandbox()): Sandbox {
@@ -220,6 +232,46 @@ describe("block-destructive-shell", () => {
       // The payload's cwd is the subdirectory; the CLI itself runs in the project root.
       const payload = JSON.stringify({ ...bash("rm -rf ../src"), cwd: join(box.project, "packages") });
       expectAsked(await box.event(payload), /tracked by git/);
+    });
+
+    describe("when the Host spells the project differently from git", () => {
+      // git names the work tree by its real path; a Host sends the cwd as the user reached it.
+      async function expectSameAnswers(box: Sandbox, cwd: string): Promise<void> {
+        const event = (command: string) => box.event(bash(command), { cwd });
+        expectNoDecision(await event("rm -rf node_modules"));
+        expectNoDecision(await event("rm -rf packages/a/node_modules"));
+        expectAsked(await event("rm -rf src"), /tracked by git/);
+        expectAsked(await event("rm -rf *"), /tracked by git/);
+        expectBlocked(await event("rm -rf ."), /whole project/);
+        expectBlocked(await event("rm -rf .."), /project/);
+        expectBlocked(await event("rm -rf ~"), /home directory/);
+      }
+
+      it("through a symlink (a junction on Windows), like macOS's /tmp → /private/tmp", async () => {
+        const box = repo();
+        const link = join(box.root, "linked-project");
+        symlinkSync(box.project, link, "junction");
+        await expectSameAnswers(box, link);
+      });
+
+      it.runIf(process.platform === "win32")("through a Windows 8.3 short name, like `%TEMP%` (`C:\\Users\\RUNNER~1\\…`)", async (ctx) => {
+        const box = repo();
+        const short = shortPath(box.project);
+        // Volumes can have 8.3 names turned off; the system drive, where the temp dir lives, normally has them.
+        if (short.toLowerCase() === box.project.toLowerCase()) ctx.skip("no 8.3 names on this volume");
+        expect(short).toMatch(/~\d/);
+        await expectSameAnswers(box, short);
+      });
+
+      it("judges a link by the link itself: deleting it removes only the link, deleting through it removes the target", async () => {
+        const box = repo();
+        const elsewhere = join(box.root, "elsewhere");
+        mkdirSync(elsewhere);
+        symlinkSync(elsewhere, join(box.project, "shared"), "junction");
+        expectAsked(await box.event(bash("rm -rf shared")), /never seen/);
+        expectBlocked(await box.event(bash("rm -rf shared/")), /outside the project/);
+        expectBlocked(await box.event(bash("rm -rf shared/*")), /outside the project/);
+      });
     });
   });
 

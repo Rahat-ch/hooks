@@ -15,9 +15,9 @@
  * real command before it runs. Blocking every dynamic delete would stop
  * routine scripts; allowing them would let `rm -rf $UNSET/` through.
  */
-import { basename, join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { parseOptions, type SimpleCommand } from "../../shell";
-import { globBase, isFilesystemRoot, isWithin, resolveOperand, samePath, toPosixRelative } from "../../paths";
+import { globBase, isFilesystemRoot, isWithin, physicalPath, resolveOperand, samePath, toPosixRelative } from "../../paths";
 import type { GitQueries } from "../../git";
 import type { Finding } from "../guard";
 
@@ -101,26 +101,61 @@ type Location =
   | { readonly kind: "root" | "home" | "project" | "outside"; readonly path: string }
   | { readonly kind: "allowed"; readonly path: string }
   | { readonly kind: "git-dir"; readonly path: string }
-  | { readonly kind: "inside"; readonly path: string; readonly glob: boolean };
+  /** `real`: `path` as the file system names it, for git pathspecs. */
+  | { readonly kind: "inside"; readonly path: string; readonly real: string; readonly glob: boolean };
 
-/** Where a resolved (possibly globbed) path falls relative to root, home and project. */
-function locate(path: string, project: string, ctx: DeleteContext): Location {
+/**
+ * The directories a delete is judged against, as the file system names them
+ * (`physicalPath`). The Host's cwd (and so every operand) may reach the
+ * project through a symlink or a Windows 8.3 short name (`RUNNER~1`), while
+ * git reports its real, long path; compared as written, every path inside
+ * the project would read as outside it.
+ */
+interface Places {
+  /** git's work tree, or the Host's cwd outside one, as given. */
+  readonly project: string;
+  readonly realProject: string;
+  readonly realHome: string;
+  readonly realAllowed: readonly string[];
+}
+
+function places(project: string, ctx: DeleteContext): Places {
+  return {
+    project,
+    realProject: physicalPath(project),
+    realHome: physicalPath(ctx.home),
+    realAllowed: ctx.allowedPaths.map((dir) => physicalPath(dir)),
+  };
+}
+
+/** `rm -r link` deletes the link; `rm -r link/`, `.` (a cwd reached through a link) and `..` mean the directory itself. */
+const namesDirectory = (operand: string) => /(^|[\\/])(\.\.?)?$/.test(operand);
+
+/**
+ * Where a resolved (possibly globbed) path falls relative to root, home and
+ * project. Root, home and the project are caught as written or as the file
+ * system names them; everything else compares real paths.
+ */
+function locate(path: string, operand: string, at: Places, ctx: DeleteContext): Location {
   const within = (p: string, ancestor: string) => isWithin(p, ancestor, ctx.platform);
   const same = (a: string, b: string) => samePath(a, b, ctx.platform);
   const { base, glob } = globBase(path);
-  if (isFilesystemRoot(base)) return { kind: "root", path: base };
-  if (within(ctx.home, base)) return { kind: "home", path: base };
-  if (within(project, base)) {
+  // A glob deletes what is in `base`, so follow it even when it is a link.
+  const realBase = physicalPath(base, { entry: !glob && !namesDirectory(operand) });
+  const real = glob ? join(realBase, relative(base, path)) : realBase;
+  if (isFilesystemRoot(base) || isFilesystemRoot(realBase)) return { kind: "root", path: base };
+  if (within(ctx.home, base) || within(at.realHome, realBase)) return { kind: "home", path: base };
+  if (within(at.project, base) || within(at.realProject, realBase)) {
     // `rm -rf *` in the project root deletes its contents: judge them as inside.
-    if (glob && same(base, project)) return { kind: "inside", path, glob };
+    if (glob && same(realBase, at.realProject)) return { kind: "inside", path, real, glob };
     return { kind: "project", path: base };
   }
-  if (within(base, project)) {
-    if (within(base, join(project, ".git"))) return { kind: "git-dir", path: base };
-    return { kind: "inside", path, glob };
+  if (within(realBase, at.realProject)) {
+    if (within(realBase, join(at.realProject, ".git"))) return { kind: "git-dir", path: base };
+    return { kind: "inside", path, real, glob };
   }
-  const allowed = ctx.allowedPaths.some(
-    (dir) => within(base, dir) && !same(base, dir) && !within(project, dir) && !within(ctx.home, dir),
+  const allowed = at.realAllowed.some(
+    (dir) => within(realBase, dir) && !same(realBase, dir) && !within(at.realProject, dir) && !within(at.realHome, dir),
   );
   return { kind: allowed ? "allowed" : "outside", path: base };
 }
@@ -165,15 +200,15 @@ function inherited(operand: string, ctx: DeleteContext): string | undefined {
   return unresolved ? undefined : value;
 }
 
-async function judge(target: Target, project: string, gitRoot: string | undefined, ctx: DeleteContext): Promise<Finding | undefined> {
+async function judge(target: Target, at: Places, gitRoot: string | undefined, ctx: DeleteContext): Promise<Finding | undefined> {
   const known = target.dynamic && target.operand !== "" ? inherited(target.operand, ctx) : undefined;
-  if (known !== undefined) return judge({ ...target, operand: known, dynamic: false }, project, gitRoot, ctx);
+  if (known !== undefined) return judge({ ...target, operand: known, dynamic: false }, at, gitRoot, ctx);
   if (target.dynamic) {
     // Worst case: every unknown part expands to nothing.
     const worst = target.operand.replace(DYNAMIC_PART, "");
     const shown = target.operand === "" ? "arguments supplied at run time" : `\`${target.operand}\``;
     if (worst !== "") {
-      const location = locate(resolveOperand(target.cwd, worst, ctx.platform), project, ctx);
+      const location = locate(resolveOperand(target.cwd, worst, ctx.platform), worst, at, ctx);
       if (catastrophic(location)) {
         return {
           decision: "block",
@@ -190,7 +225,7 @@ async function judge(target: Target, project: string, gitRoot: string | undefine
     };
   }
 
-  const location = locate(resolveOperand(target.cwd, target.operand, ctx.platform), project, ctx);
+  const location = locate(resolveOperand(target.cwd, target.operand, ctx.platform), target.operand, at, ctx);
   switch (location.kind) {
     case "allowed":
       return undefined;
@@ -200,7 +235,7 @@ async function judge(target: Target, project: string, gitRoot: string | undefine
         reason: `\`${target.operand}\` deletes the repository's git data (${location.path}), including any unpushed history. Confirm this is intended.`,
       };
     case "inside":
-      return judgeInside(target, location.path, location.glob, gitRoot, ctx);
+      return judgeInside(target, location.real, location.glob, gitRoot === undefined ? undefined : at.realProject, ctx);
     default:
       return { decision: "block", reason: blockReason(location, target.operand) };
   }
@@ -210,6 +245,7 @@ async function judgeInside(
   target: Target,
   path: string,
   glob: boolean,
+  /** git's work tree as the file system names it; undefined outside one. */
   gitRoot: string | undefined,
   ctx: DeleteContext,
 ): Promise<Finding | undefined> {
@@ -239,10 +275,10 @@ export async function deleteFindings(commands: readonly SimpleCommand[], ctx: De
   // root, so the two must agree (they differ under GIT_DIR/GIT_WORK_TREE, or
   // with a `.git` git doesn't accept). Outside a repository: the Host's cwd.
   const gitRoot = await ctx.git.topLevel(ctx.cwd);
-  const project = gitRoot ?? ctx.cwd;
+  const at = places(gitRoot ?? ctx.cwd, ctx);
   const findings: Finding[] = [];
   for (const target of targets) {
-    const finding = await judge(target, project, gitRoot, ctx);
+    const finding = await judge(target, at, gitRoot, ctx);
     if (finding !== undefined) findings.push(finding);
   }
   return findings;
