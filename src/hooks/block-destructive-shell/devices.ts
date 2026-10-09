@@ -65,7 +65,8 @@ export function deviceFindings(command: SimpleCommand): Finding[] {
   }
   const written = [
     ...deviceOperands(command),
-    ...command.redirections.filter((r) => r.direction !== "read").map((r) => r.path ?? r.target),
+    // As written too: on Windows `/dev/sda` resolves to `C:\dev\sda`, but Git Bash opens the raw disk.
+    ...command.redirections.filter((r) => r.direction !== "read").flatMap((r) => [r.target, r.path ?? r.target]),
   ].filter(isDevice);
   for (const device of new Set(written)) {
     findings.push({
