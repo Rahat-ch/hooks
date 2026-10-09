@@ -54,7 +54,11 @@ function build(): string {
 
 export default function setup(project: TestProject) {
   const bundle = build();
-  const runRoot = realpathSync(mkdtempSync(join(tmpdir(), "hardhooks-e2e-")));
+  // The real path: macOS's tmpdir is under the /var -> /private/var symlink, and on
+  // Windows %TEMP% is spelled with 8.3 short names (C:\Users\RUNNER~1\...), while
+  // the CLI reports roots as git and realpath name them. Tests that spell a
+  // directory another way on purpose do so explicitly (block-destructive-shell).
+  const runRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "hardhooks-e2e-")));
   const node = realpathSync(process.execPath);
   const git = which("git");
   let toolsPath: string[];
