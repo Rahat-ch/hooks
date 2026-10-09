@@ -4,7 +4,7 @@
  * and, for deletes inside the project, a real git repo (ADR-0006).
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, symlinkSync } from "node:fs";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -266,7 +266,8 @@ describe("block-destructive-shell", () => {
       it("judges a link by the link itself: deleting it removes only the link, deleting through it removes the target", async () => {
         const box = repo();
         const elsewhere = join(box.root, "elsewhere");
-        mkdirSync(elsewhere);
+        // Not empty: Git for Windows sees a junction as a directory, and an empty one holds nothing to lose.
+        box.writeFile(join(elsewhere, "work.txt"));
         symlinkSync(elsewhere, join(box.project, "shared"), "junction");
         expectAsked(await box.event(bash("rm -rf shared")), /never seen/);
         expectBlocked(await box.event(bash("rm -rf shared/")), /outside the project/);
