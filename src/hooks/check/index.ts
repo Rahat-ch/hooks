@@ -82,17 +82,39 @@ const presetOptions: CheckOptions = {
   editOutputBytes: 1000,
 };
 
-/** Exit codes shells use for "command not found": 127 for sh, 9009 for cmd.exe. */
+/** Exit codes shells use for "command not found": 127 for sh, 9009 for cmd.exe running a batch file. */
 const notFoundExitCodes = new Set([127, 9009]);
+
+/**
+ * Whether the shell could not find the program that starts `command`. `cmd /c`
+ * exits 1 for that, so on Windows it is recognised by cmd's message naming
+ * that program (English Windows only; elsewhere it counts as a failure). A
+ * program missing further in, inside an npm script say, is the command
+ * failing, as it is on POSIX.
+ */
+function notFound(result: ProcessResult, command: string, platform: NodeJS.Platform): boolean {
+  if (result.exitCode !== null && notFoundExitCodes.has(result.exitCode)) return true;
+  if (platform !== "win32" || result.exitCode !== 1) return false;
+  const program = /^\s*(?:"([^"]+)"|(\S+))/.exec(command);
+  const name = program?.[1] ?? program?.[2];
+  return name !== undefined && result.stderr.trimStart().toLowerCase().startsWith(`'${name.toLowerCase()}' is not recognized`);
+}
 
 function runCommandLine(command: string, cwd: string, timeoutSeconds: number, env: Environment): Promise<ProcessResult> {
   return env.processRunner.run(command, [], { cwd, env: env.env, shell: true, timeoutMs: timeoutSeconds * 1000 });
 }
 
-/** The fail-open warning when a command gave no pass/fail answer, or undefined when it did. */
-function noAnswer(result: ProcessResult, chosen: string, timeoutSeconds: number, outcome: string): Decision | undefined {
+/** The fail-open warning when `command` gave no pass/fail answer, or undefined when it did. */
+function noAnswer(
+  result: ProcessResult,
+  command: string,
+  chosen: string,
+  timeoutSeconds: number,
+  outcome: string,
+  env: Environment,
+): Decision | undefined {
   if (result.timedOut) return message(`${chosen} timed out after ${timeoutSeconds}s, so ${outcome}.`);
-  if (result.spawnError !== undefined || result.exitCode === null || notFoundExitCodes.has(result.exitCode)) {
+  if (result.spawnError !== undefined || result.exitCode === null || notFound(result, command, env.platform)) {
     const why = result.spawnError ?? (truncateOutput(result.stderr, 300) || `exit ${result.exitCode}`);
     return message(`could not run ${chosen} (${why}), so ${outcome}.`);
   }
@@ -125,7 +147,7 @@ async function onStop(event: HookEvent, options: CheckOptions, env: Environment,
   }
 
   const result = await runCommandLine(command, event.cwd, options.timeoutSeconds, env);
-  const unanswered = noAnswer(result, chosen, options.timeoutSeconds, "check let the Host stop unchecked");
+  const unanswered = noAnswer(result, command, chosen, options.timeoutSeconds, "check let the Host stop unchecked", env);
   if (unanswered) return unanswered;
   if (result.exitCode === 0) {
     state.setConsecutiveBlocks(session, event.name, 0);
@@ -155,7 +177,7 @@ async function onEdit(event: HookEvent, options: CheckOptions, env: Environment)
     : `${options.editCommand} ${file}`;
 
   const result = await runCommandLine(command, event.cwd, options.editTimeoutSeconds, env);
-  const unanswered = noAnswer(result, `\`${command}\``, options.editTimeoutSeconds, "the edit was not checked");
+  const unanswered = noAnswer(result, command, `\`${command}\``, options.editTimeoutSeconds, "the edit was not checked", env);
   if (unanswered) return unanswered;
   if (result.exitCode === 0) return undefined;
   return addContext(
