@@ -121,7 +121,7 @@ describe("check", () => {
       enableCheck(box, { command: "hardhooks-no-such-check-command --all" });
 
       const result = await box.event(claudeCode.stop());
-      expect(observe(result).decision).toBe("none");
+      expect(observe(result).decision, result.stdout).toBe("none");
       expectMessage(result, /could not run/i);
     });
   });

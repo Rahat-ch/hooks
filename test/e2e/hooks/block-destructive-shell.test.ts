@@ -382,9 +382,10 @@ describe("block-destructive-shell", () => {
       const box = sandbox();
       const scratch = `${box.home}/../scratch`;
       configured("standard", { allowedPaths: [scratch] }, box);
-      expectNoDecision(await box.event(bash(`rm -rf ${scratch}/build`)));
+      // Quoted, so a shell keeps the backslashes of a Windows path.
+      expectNoDecision(await box.event(bash(`rm -rf '${scratch}/build'`)));
       // The directory itself is still protected.
-      expectBlocked(await box.event(bash(`rm -rf ${scratch}`)), /outside the project/);
+      expectBlocked(await box.event(bash(`rm -rf '${scratch}'`)), /outside the project/);
     });
 
     it("expands variables and drops entries whose variable is unset", async () => {
