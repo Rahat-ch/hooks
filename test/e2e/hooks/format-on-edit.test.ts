@@ -239,9 +239,12 @@ describe("format-on-edit", () => {
       expect(fmt.calls().map((call) => call.argv)).toEqual([[join(box.project, "notes.txt")]]);
     });
 
+    // These two bound the run by the formatter's own delay, with a wide margin for a loaded
+    // CI runner (ADR-0006): a CLI that waited for the formatter would take the whole delay.
     it("`timeoutMs` bounds a hung formatter, which is then ignored", async () => {
       const box = project({ "a.ts": "const  a=1\n" });
-      const hung = fakeCommand(box, "hung-fmt", { delayMs: 15_000 });
+      const hangMs = 15_000;
+      const hung = fakeCommand(box, "hung-fmt", { delayMs: hangMs });
       box.writeRepoConfig({ hooks: { "format-on-edit": { command: commandFor(hung), timeoutMs: 300 } } });
       await box.trust();
 
@@ -249,24 +252,25 @@ describe("format-on-edit", () => {
 
       expectNoDecision(result);
       expect(result.stderr).toBe("");
-      expect(result.durationMs).toBeLessThan(5_000);
+      expect(result.durationMs).toBeLessThan(hangMs / 2);
       expect(read(join(box.project, "a.ts"))).toBe("const  a=1\n");
     });
 
     it("`timeoutMs` holds even when the formatter's own child process keeps running", async () => {
       // Like the biome and dprint npm wrappers: node starts the real binary, which inherits stdout/stderr.
       const box = project({ "a.ts": "" });
-      const binary = fakeCommand(box, "native-fmt", { delayMs: 4_000 });
+      const hangMs = 15_000;
+      const binary = fakeCommand(box, "native-fmt", { delayMs: hangMs });
       const wrapper =
         `require('child_process').spawn(process.execPath, [${JSON.stringify(binary.path)}], ` +
-        "{ stdio: 'inherit', cwd: require('os').tmpdir() }); setTimeout(() => {}, 15000)";
+        `{ stdio: 'inherit', cwd: require('os').tmpdir() }); setTimeout(() => {}, ${hangMs})`;
       box.writeRepoConfig({ hooks: { "format-on-edit": { command: ["node", "-e", wrapper], timeoutMs: 300 } } });
       await box.trust();
 
       const result = await box.event(writePayload(join(box.project, "a.ts")));
 
       expectNoDecision(result);
-      expect(result.durationMs).toBeLessThan(3_000);
+      expect(result.durationMs).toBeLessThan(hangMs / 2);
     });
 
     it("a `command` that cannot be started is ignored quietly", async () => {
