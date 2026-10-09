@@ -331,7 +331,8 @@ describe("format-on-edit", () => {
     // prettier (a Node package) rather than ruff, so these run on every OS; "not installed" leaves no fake to run.
     it.each<{ failure: string; behaviour?: FakeBehaviour; timeoutMs?: number }>([
       { failure: "the formatter fails", behaviour: { exitCode: 2, stderr: "[error] a.ts: SyntaxError: ')' expected." } },
-      { failure: "the formatter times out", behaviour: { delayMs: 15_000 }, timeoutMs: 300 },
+      // Long enough for the fake to start and record its call on a loaded runner, far below its delay.
+      { failure: "the formatter times out", behaviour: { delayMs: 15_000 }, timeoutMs: 3_000 },
       { failure: "the formatter is not installed" },
     ])("when $failure", async ({ behaviour, timeoutMs }) => {
       const box = project({ ".prettierrc": "{}", "a.ts": "x=(\n" });
