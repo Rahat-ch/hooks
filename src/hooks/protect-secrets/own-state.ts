@@ -120,7 +120,11 @@ export function ownStateDirs(env: Environment): string[] {
 /** Matches paths in hardhooks' own state, as written or resolved. */
 class OwnState {
   private readonly dirs: string[];
-  /** Spellings of the dirs that code or a dynamic word may contain: absolute, `~/…`, `$HOME/…`. */
+  /**
+   * Spellings of the dirs that code or a dynamic word may contain, lower-cased
+   * with `/` separators: absolute (also `c:/…` for a drive the canonical form
+   * spells `/c/…`), `~/…`, `$HOME/…`.
+   */
   private readonly spellings: string[];
 
   constructor(
@@ -130,8 +134,10 @@ class OwnState {
     this.dirs = dirs.map(canonicalPath);
     const canonicalHome = canonicalPath(home);
     this.spellings = this.dirs.flatMap((dir) => {
+      const drive = /^\/([a-z])\//.exec(dir);
+      const absolute = drive ? [dir, `${drive[1]}:${dir.slice(2)}`] : [dir];
       const rel = dir.startsWith(`${canonicalHome}/`) ? dir.slice(canonicalHome.length + 1) : undefined;
-      return rel === undefined ? [dir] : [dir, `~/${rel}`, `$home/${rel}`, `\${home}/${rel}`];
+      return rel === undefined ? absolute : [...absolute, `~/${rel}`, `$home/${rel}`, `\${home}/${rel}`];
     });
   }
 
